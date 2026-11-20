@@ -1,0 +1,11 @@
+<resources>
+    <style name="DolosDialog" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dolos_sheet</item>
+        <item name="android:colorAccent">#c4ddff</item>
+        <item name="android:textColorPrimary">#f5f7fb</item>
+        <item name="android:textColorSecondary">#bcc9d9</item>
+        <item name="android:backgroundDimAmount">0.64</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowElevation">12dp</item>
+    </style>
+</resources>

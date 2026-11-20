@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Non-root application name -->
+    <!-- FIXME: We should set extractNativeLibs=false but this breaks installation on the Fire TV 3 -->
+    <application android:label="Dolos Remote">
+        <activity android:name=".ConsoleStudio" android:screenOrientation="sensorLandscape" />
+        <activity android:name=".PcView" android:screenOrientation="sensorLandscape" />
+        <activity android:name=".ShortcutTrampoline" android:screenOrientation="sensorLandscape" />
+        <activity android:name=".SetupGuide" android:screenOrientation="sensorLandscape" />
+        <activity android:name=".AppView" android:screenOrientation="sensorLandscape" />
+        <activity android:name=".preferences.StreamSettings" android:screenOrientation="sensorLandscape" />
+        <activity android:name=".preferences.AddComputerManually" android:screenOrientation="sensorLandscape" />
+        <activity android:name=".Game" android:screenOrientation="sensorLandscape" />
+        <activity android:name=".HelpActivity" android:screenOrientation="sensorLandscape" />
+    </application>
+</manifest>

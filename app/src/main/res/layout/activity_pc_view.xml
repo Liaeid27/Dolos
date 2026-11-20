@@ -1,0 +1,21 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/connectionField" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#10151e">
+ <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:paddingLeft="28dp" android:paddingTop="16dp" android:paddingRight="28dp" android:paddingBottom="14dp">
+  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+   <ImageView android:layout_width="42dp" android:layout_height="42dp" android:src="@drawable/dolos_emblem" android:importantForAccessibility="no"/>
+   <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:paddingLeft="8dp" android:text="D O L O S" android:textSize="15sp" android:textColor="#efe4cc"/>
+   <ImageButton android:id="@+id/settingsButton" android:layout_width="44dp" android:layout_height="44dp" android:padding="12dp" android:scaleType="fitCenter" android:contentDescription="Einstellungen" android:background="@drawable/dolos_action" android:src="@drawable/ic_settings"/>
+  </LinearLayout>
+  <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+   <FrameLayout android:id="@+id/pcFragmentContainer" android:layout_width="match_parent" android:layout_height="match_parent"/>
+   <LinearLayout android:id="@+id/no_pc_found_layout" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:gravity="center_vertical">
+    <ImageView android:layout_width="78dp" android:layout_height="78dp" android:src="@drawable/dolos_emblem" android:importantForAccessibility="no"/>
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PC verbinden" android:textColor="#f4f1e9" android:textSize="34sp" android:fontFamily="sans-serif-light"/>
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:id="@+id/connectionHint" android:maxWidth="420dp" android:paddingTop="6dp" android:text="Dolos sucht im Heimnetz nach deinem PC. Öffne Apollo auf dem PC oder gib seine lokale IP-Adresse ein." android:textColor="#c6cfdb" android:textSize="15sp"/>
+   </LinearLayout>
+  </FrameLayout>
+  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+   <Button android:id="@+id/manuallyAddPc" android:layout_width="wrap_content" android:layout_height="44dp" android:background="@drawable/dolos_action" android:paddingLeft="16dp" android:paddingRight="16dp" android:text="IP eingeben" android:textSize="14sp" android:textAllCaps="false" android:textColor="#ffffff"/>
+   <Button android:id="@+id/helpButton" android:layout_width="wrap_content" android:layout_height="44dp" android:layout_marginLeft="10dp" android:background="@drawable/dolos_action" android:paddingLeft="16dp" android:paddingRight="16dp" android:text="Einrichtung" android:textSize="14sp" android:textAllCaps="false" android:textColor="#ffffff"/>
+  </LinearLayout>
+ </LinearLayout>
+</FrameLayout>
