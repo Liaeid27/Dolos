@@ -78,13 +78,16 @@ final class Catalog {
             if(!BuildConfig.REMOTE_BUILD&&home.library!=null&&home.host instanceof AppView){
                 AppView activity=(AppView)home.host;
                 if(android.os.Build.VERSION.SDK_INT>=23)web.postVisualStateCallback(0,new WebView.VisualStateCallback(){
-                    public void onComplete(long requestId){activity.revealLibrary();}
-                });else web.postOnAnimation(activity::revealLibrary);
+                    public void onComplete(long requestId){activity.waitForLibraryArt();}
+                });else web.postOnAnimation(activity::waitForLibraryArt);
             }
         });if(home.link.prefs().contains("token"))home.link.run("status","","");}
     }
     void applyTheme(){
-        web.evaluateJavascript("window.tvInput="+ConsoleDock.isTV(home.host),null);
+        boolean controller=false;for(int device:android.view.InputDevice.getDeviceIds()){
+            android.view.InputDevice d=android.view.InputDevice.getDevice(device);if(d!=null&&!d.isVirtual()&&d.supportsSource(android.view.InputDevice.SOURCE_GAMEPAD)){controller=true;break;}
+        }
+        web.evaluateJavascript("window.tvInput="+ConsoleDock.isTV(home.host)+";if(window.tvInput)document.getElementById('pairPad').hidden="+controller,null);
         boolean enhanced="enhanced".equals(ConsoleHome.appearance(home.host).getString("theme","normal"));
         android.content.SharedPreferences settings=ConsoleHome.appearance(home.host);
         web.evaluateJavascript("window.tvTrailerAudio="+(!BuildConfig.REMOTE_BUILD&&settings.getBoolean("trailerAudio",true)),null);
@@ -100,7 +103,7 @@ final class Catalog {
             @Override public WebResourceResponse shouldInterceptRequest(WebView view,WebResourceRequest request){
                 Uri uri=request.getUrl();
                 String cdn=uri.getHost(),mediaPath=uri.getPath();
-                if(BuildConfig.REMOTE_BUILD && "https".equals(uri.getScheme()) && cdn!=null &&
+                if("https".equals(uri.getScheme()) && cdn!=null &&
                    cdn.endsWith(".steamstatic.com") && mediaPath!=null && mediaPath.matches("/(?:store_item_assets/steam/apps|steam/apps)/.+\\.(?i:jpg|jpeg|png|webp)")){
                     try{return RemoteMedia.fetch(home.host,uri.toString(),false);}
                     catch(IOException e){return new WebResourceResponse("text/plain","UTF-8",404,"Unavailable",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));}
@@ -117,14 +120,7 @@ final class Catalog {
                         }
                         if(path!=null && path.matches("/metadata/[0-9]{1,10}")){
                             java.net.URL url=new java.net.URL("https://store.steampowered.com/api/appdetails?cc=de&l=german&appids="+uri.getLastPathSegment());
-                            if(BuildConfig.REMOTE_BUILD)return RemoteMedia.fetch(home.host,url.toString(),true);
-                            java.net.HttpURLConnection con=(java.net.HttpURLConnection)url.openConnection();
-                            con.setConnectTimeout(4500);con.setReadTimeout(6500);
-                            try(InputStream in=con.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
-                                byte[] buf=new byte[8192];int count;
-                                while((count=in.read(buf))!=-1){if(out.size()+count>2000000)throw new IOException("Store details too large");out.write(buf,0,count);}
-                                return new WebResourceResponse("application/json","UTF-8",new ByteArrayInputStream(out.toByteArray()));
-                            }finally{con.disconnect();}
+                            return RemoteMedia.fetch(home.host,url.toString(),true);
                         }
                         if(path!=null && path.startsWith("/art/")){
                             String id=uri.getLastPathSegment();
@@ -160,6 +156,10 @@ final class Catalog {
                 else if("close".equals(action))home.host.finish();
                 else if("studio".equals(action))ConsoleStudio.open(home.host,u.getLastPathSegment(),home.host.getIntent().getStringExtra(AppView.UUID_EXTRA),home.host.getSharedPreferences("studio",0).getString("lastHost",null));
                 else if("settings".equals(action))ConsoleStudio.open(home.host,"video",home.host.getIntent().getStringExtra(AppView.UUID_EXTRA),home.host.getSharedPreferences("studio",0).getString("lastHost",null));
+                else if("bluetooth".equals(action)){
+                    try{home.host.startActivity(new android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));}
+                    catch(android.content.ActivityNotFoundException e){home.host.startActivity(new android.content.Intent(android.provider.Settings.ACTION_SETTINGS));}
+                }
                 else if("profile".equals(action))home.chooseProfile();
                 else if("power".equals(action))home.power();
                 else if("quit".equals(action))home.actions.quit();
@@ -173,7 +173,7 @@ final class Catalog {
                     String id=steamId(g.toString());if(!id.isEmpty()){
                         if("remove".equals(action))new android.app.AlertDialog.Builder(home.host).setTitle(home.displayName(g)).setMessage("Spiel auf dem PC deinstallieren?")
                             .setNegativeButton("Abbrechen",null).setPositiveButton("Deinstallieren",(d,w)->home.link.run(action,id,home.displayName(g))).show();
-                        else home.link.run(action,id,home.displayName(g));
+                        else home.link.run(action,id,home.displayName(g),u.getQueryParameter("drive"));
                     }
                 }
                 else if(g!=null && ("pin".equals(action)||"unpin".equals(action))){
@@ -182,6 +182,7 @@ final class Catalog {
                 return true;
             }
         });
+        StickNavigation.attach(web);
         web.setOnKeyListener((v,key,event)->{
             if(key==KeyEvent.KEYCODE_BUTTON_A || key==KeyEvent.KEYCODE_DPAD_CENTER){
                 if(event.getAction()==KeyEvent.ACTION_UP)web.evaluateJavascript(

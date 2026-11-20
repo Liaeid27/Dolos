@@ -133,7 +133,8 @@ public class UiHelper {
             int verticalPaddingPixels = (int) (TV_VERTICAL_PADDING_DP*scale + 0.5f);
             int horizontalPaddingPixels = (int) (TV_HORIZONTAL_PADDING_DP*scale + 0.5f);
 
-            rootView.setPadding(horizontalPaddingPixels, verticalPaddingPixels,
+            if(activity instanceof com.limelight.AppView || activity instanceof com.limelight.PcView)rootView.setPadding(0,0,0,0);
+            else rootView.setPadding(horizontalPaddingPixels, verticalPaddingPixels,
                     horizontalPaddingPixels, verticalPaddingPixels);
         }
         else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

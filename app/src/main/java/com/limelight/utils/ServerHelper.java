@@ -28,6 +28,8 @@ public class ServerHelper {
 
     public static ComputerDetails.AddressTuple getCurrentAddressFromComputer(ComputerDetails computer) throws IOException {
         if (computer.activeAddress == null) {
+            if(computer.manualAddress!=null)return computer.manualAddress;
+            if(computer.localAddress!=null)return computer.localAddress;
             throw new IOException("No active address for "+computer.name);
         }
         return computer.activeAddress;
@@ -55,14 +57,15 @@ public class ServerHelper {
     public static Intent createStartIntent(Activity parent, NvApp app, ComputerDetails computer,
                                            ComputerManagerService.ComputerManagerBinder managerBinder) {
         Intent intent = new Intent(parent, Game.class);
-        intent.putExtra(Game.EXTRA_HOST, computer.activeAddress.address);
+        ComputerDetails.AddressTuple address=computer.activeAddress!=null?computer.activeAddress:(computer.manualAddress!=null?computer.manualAddress:computer.localAddress);
+        intent.putExtra(Game.EXTRA_HOST,address.address);
         if(computer.localAddress!=null){intent.putExtra("localHost",computer.localAddress.address);intent.putExtra("localPort",computer.localAddress.port);}
         if(computer.manualAddress!=null){intent.putExtra("manualHost",computer.manualAddress.address);intent.putExtra("manualPort",computer.manualAddress.port);}
-        intent.putExtra(Game.EXTRA_PORT, computer.activeAddress.port);
+        intent.putExtra(Game.EXTRA_PORT,address.port);
         if(com.limelight.BuildConfig.REMOTE_BUILD){
             android.content.SharedPreferences remote=parent.getSharedPreferences("remote",0);
-            intent.putExtra(Game.EXTRA_HOST,remote.getString("host."+computer.uuid,computer.manualAddress==null?computer.activeAddress.address:computer.manualAddress.address));
-            intent.putExtra(Game.EXTRA_PORT,remote.getInt("port."+computer.uuid,computer.manualAddress==null?computer.activeAddress.port:computer.manualAddress.port));
+            intent.putExtra(Game.EXTRA_HOST,remote.getString("host."+computer.uuid,computer.manualAddress==null?address.address:computer.manualAddress.address));
+            intent.putExtra(Game.EXTRA_PORT,remote.getInt("port."+computer.uuid,computer.manualAddress==null?address.port:computer.manualAddress.port));
         }
         intent.putExtra(Game.EXTRA_HTTPS_PORT, computer.httpsPort);
         intent.putExtra(Game.EXTRA_APP_NAME, app.getAppName());
@@ -83,7 +86,7 @@ public class ServerHelper {
 
     public static void doStart(Activity parent, NvApp app, ComputerDetails computer,
                                ComputerManagerService.ComputerManagerBinder managerBinder) {
-        if (computer.state == ComputerDetails.State.OFFLINE || computer.activeAddress == null) {
+        if (computer.manualAddress==null && computer.localAddress==null && computer.activeAddress==null) {
             Toast.makeText(parent, parent.getResources().getString(R.string.pair_pc_offline), Toast.LENGTH_SHORT).show();
             return;
         }
@@ -136,7 +139,7 @@ public class ServerHelper {
                 try {
                     httpConn = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer), computer.httpsPort,
                             managerBinder.getUniqueId(), computer.serverCert, PlatformBinding.getCryptoProvider(parent));
-                    if (httpConn.quitApp()) {
+                    if (httpConn.getCurrentGame(httpConn.getServerInfo(true))==0 || httpConn.quitApp()) {
                         message = parent.getResources().getString(R.string.applist_quit_success) + " " + app.getAppName();
                     } else {
                         message = parent.getResources().getString(R.string.applist_quit_fail) + " " + app.getAppName();

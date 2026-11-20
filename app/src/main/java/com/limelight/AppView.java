@@ -53,8 +53,17 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
     private volatile boolean wakeAttempted;
     private ConsoleHome home;
     private android.widget.ImageView startupStill;
+    private android.widget.ProgressBar startupProgress;
+    void waitForLibraryArt(){
+        if(startupStill==null)return;
+        home.console.web.evaluateJavascript("document.querySelectorAll('#rail .tile:not(.bag)').length===0 || !!document.querySelector('#rail .atlasCover') || Array.from(document.querySelectorAll('#rail img')).some(i=>i.naturalWidth>0)",ready->{
+            if("true".equals(ready))revealLibrary();
+            else if(startupStill!=null)startupStill.postDelayed(this::waitForLibraryArt,160);
+        });
+    }
     void revealLibrary(){
         final android.widget.ImageView image=startupStill;if(image==null)return;
+        if(startupProgress!=null){home.removeView(startupProgress);startupProgress=null;}
         startupStill=null;image.animate().alpha(0).setDuration(320).withEndAction(()->home.removeView(image));
     }
     private android.media.MediaPlayer ambience;
@@ -203,8 +212,9 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
                 }
 
                 runOnUiThread(()->home.detail.setText(details.name+
-                    (details.state==ComputerDetails.State.ONLINE?"  ·  Online":"  ·  Offline")));
+                    (details.state==ComputerDetails.State.ONLINE?"  ·  Online":home.link.lastResponse>0 && android.os.SystemClock.elapsedRealtime()-home.link.lastResponse<15000?"  ·  PC erreichbar":"  ·  Verbindung wird geprüft")));
                 if(details.state==ComputerDetails.State.OFFLINE) {
+                    if(home.link.prefs().contains("token"))runOnUiThread(()->home.link.run("status","",""));
                     if(!wakeAttempted && getSharedPreferences("console",MODE_PRIVATE).getBoolean("wake",true) && (BuildConfig.REMOTE_BUILD||details.macAddress!=null)) {
                         wakeAttempted=true;
                         new Thread(()->{
@@ -303,7 +313,12 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
         if(!BuildConfig.REMOTE_BUILD){
             startupStill=new android.widget.ImageView(this);startupStill.setBackgroundColor(android.graphics.Color.BLACK);
             startupStill.setImageResource(R.drawable.dolos_transition);startupStill.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
-            home.addView(startupStill,new android.widget.FrameLayout.LayoutParams(-1,-1));startupStill.postDelayed(this::revealLibrary,3500);
+            home.addView(startupStill,new android.widget.FrameLayout.LayoutParams(-1,-1));startupStill.setScaleX(1.035f);startupStill.setScaleY(1.035f);startupStill.animate().scaleX(1f).scaleY(1f).setDuration(2900);startupStill.postDelayed(this::revealLibrary,5500);
+            startupProgress=new android.widget.ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+            startupProgress.setIndeterminate(true);
+            int unit=(int)(getResources().getDisplayMetrics().density*4);
+            android.widget.FrameLayout.LayoutParams bar=new android.widget.FrameLayout.LayoutParams(unit*30,unit,android.view.Gravity.CENTER);
+            bar.topMargin=unit*18;home.addView(startupProgress,bar);
         }
         getWindow().getDecorView().setSystemUiVisibility(5894);
 
@@ -313,6 +328,7 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
         }
 
         UiHelper.notifyNewRootView(this);
+        getWindow().setStatusBarColor(android.graphics.Color.BLACK);getWindow().setNavigationBarColor(android.graphics.Color.BLACK);
 
         showHiddenApps = getIntent().getBooleanExtra(SHOW_HIDDEN_APPS_EXTRA, false);
         uuidString = getIntent().getStringExtra(UUID_EXTRA);
@@ -334,7 +350,11 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
     }
 
     String controlAddress(){
-        if(computer==null)return null;
+        if(computer==null){
+            android.content.SharedPreferences studio=getSharedPreferences("studio",0);
+            String id=getIntent().getStringExtra(UUID_EXTRA);
+            return id!=null&&id.equals(studio.getString("lastUuid",""))?studio.getString("lastHost",null):null;
+        }
         if(BuildConfig.REMOTE_BUILD)return getSharedPreferences("remote",0).getString("host."+computer.uuid,computer.manualAddress!=null?computer.manualAddress.address:computer.activeAddress==null?null:computer.activeAddress.address);
         com.limelight.utils.HomeNetwork lan=com.limelight.utils.HomeNetwork.select(this,computer.localAddress==null?null:computer.localAddress.address,computer.manualAddress==null?null:computer.manualAddress.address,computer.activeAddress==null?null:computer.activeAddress.address);
         if(lan!=null)return lan.address;

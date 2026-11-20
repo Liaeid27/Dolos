@@ -4,11 +4,14 @@ let idleTimer=0,mediaEpoch=0,player=null,optionFocus=null,cinemaOrigin=null,duck
 function trustedMedia(value){
  try{const u=new URL(value);return u.protocol==="https:"&&u.hostname.endsWith(".steamstatic.com")?u.href:""}catch(e){return ""}
 }
+let pcMedia={};
+function receiveMedia(rows){pcMedia=rows;if(atlasHost)try{localStorage.setItem("dolos.media."+atlasHost,JSON.stringify(rows))}catch(e){}}
 function detailsFor(g){
  const id=/^\d{1,10}$/.test(g?.steamId||"")?g.steamId:controlData.storeLinks?.[g?.name];if(!/^\d{1,10}$/.test(id||""))return Promise.resolve(null);
+ if(pcMedia[id])return Promise.resolve(pcMedia[id]);
  if(!storeDetails.has(id)){
   const result=fetch("/metadata/"+id).then(r=>r.json()).then(raw=>{
-   const d=raw[id]?.data;if(!d){if(window.remoteArt)storeDetails.delete(id);return null;}
+   const d=raw[id]?.data;if(!d){storeDetails.delete(id);return null;}
    const movies=d.movies||[];const movie=[...movies.filter(m=>m.highlight),...movies].find(m=>trustedMedia(m.hls_h264)||trustedMedia(m.mp4?.["480"]));
    const text=new DOMParser().parseFromString(d.short_description||"","text/html").body.textContent;
    return {header:trustedMedia(d.header_image),backdrop:trustedMedia(d.background_raw)||trustedMedia(d.background),description:text,genre:(d.genres||[]).slice(0,2).map(r=>r.description).join(" · "),movie:trustedMedia(movie?.hls_h264)||trustedMedia(movie?.mp4?.["480"]),shots:(d.screenshots||[]).slice(0,4).map(s=>({thumb:trustedMedia(s.path_thumbnail),full:trustedMedia(s.path_full)})).filter(s=>s.thumb&&s.full)}
@@ -46,10 +49,11 @@ function playFilm(video,url,silent){
 function resumeAmbient(){if(page==="home")scheduleTrailer(current());else if(page==="product")scheduleTrailer(product,"product")}
 function scheduleTrailer(g,where="home"){
  stopMedia();const epoch=mediaEpoch;if(!g?.id)return;
+ setTimeout(()=>{if(epoch===mediaEpoch)detailsFor(g)},400);
  idleTimer=setTimeout(async()=>{
   let d=await detailsFor(g);if(!d&&window.remoteArt&&epoch===mediaEpoch){await new Promise(resolve=>setTimeout(resolve,2500));if(epoch===mediaEpoch)d=await detailsFor(g)}if(epoch!==mediaEpoch||document.hidden||page!==where||(where==="home"?selection:product?.id)!==g.id||!$("#cinema").hidden||!d?.movie||!$("#center").hidden||!$("#gameOptions").hidden)return;
   playFilm($("#ambientTrailer"),d.movie,true)
- },where==="home"?25000:10000)
+ },where==="home"?8500:10000)
 }
 function loadProduct(g){
  const desc=$("#synopsis"),shots=$("#shots"),watch=$("#watchTrailer");

@@ -32,6 +32,7 @@ public class ConsoleStudio extends Activity {
     }
     void sendOptions(){try{js("streamOptions("+stream.model()+")");}catch(Exception e){note(message(e));}}
     private boolean working;
+    private static final String LOCAL_STUDIO="file:///android_asset/catalog/studio.html";
 
     static void open(Activity a,String section,String uuid,String host){
         Intent i=new Intent(a,ConsoleStudio.class).putExtra("section",section);
@@ -61,11 +62,13 @@ public class ConsoleStudio extends Activity {
         web.setWebViewClient(new WebViewClient(){
             public boolean shouldOverrideUrlLoading(WebView v,String url){
                 Uri u=Uri.parse(url);
+                if(ORIGIN.concat("studio.html").equals(url)||LOCAL_STUDIO.equals(url))return false;
                 if("studio".equals(u.getScheme()))try{action(u.getHost(),new JSONObject(u.getLastPathSegment()));}catch(Exception e){note(message(e));}
                 return true;
             }
             public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest req){
                 Uri u=req.getUrl();
+                if("file".equals(u.getScheme()) && u.getPath()!=null && u.getPath().startsWith("/android_asset/catalog/"))return null;
                 if("https".equals(u.getScheme())&&"cdn.steamdeckrepo.com".equals(u.getHost())&&u.getPath()!=null&&u.getPath().startsWith("/thumbnails/"))return null;
                 if(ORIGIN.startsWith("https://"+u.getHost()+"/") && "https".equals(u.getScheme()))try{
                     String route=u.getPath();
@@ -76,7 +79,7 @@ public class ConsoleStudio extends Activity {
                         try(InputStream in=con.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
                             copy(in,out,24*1024*1024);data=out.toByteArray();
                         }finally{con.disconnect();}
-                        return new WebResourceResponse("application/json","UTF-8",new ByteArrayInputStream(data));
+                        return new WebResourceResponse("application/json","UTF-8",200,"OK",Collections.singletonMap("Access-Control-Allow-Origin","*"),new ByteArrayInputStream(data));
                     }
                     if(route.matches("/still_[a-z]+_(on|off)\\.jpg"))return new WebResourceResponse("image/jpeg",null,getAssets().open("catalog"+route));
                     if(Arrays.asList("/tv-keyboard.js","/studio.html","/studio.css","/studio.js","/atelier.png","/enhanced.jpg").contains(route))
@@ -84,14 +87,12 @@ public class ConsoleStudio extends Activity {
                 }catch(Exception ignored){}
                 return new WebResourceResponse("text/plain","UTF-8",404,"Unavailable",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));
             }
-            public void onPageFinished(WebView v,String url){if((ORIGIN+"studio.html").equals(url)){js("window.tvInput="+ConsoleDock.isTV(ConsoleStudio.this));sync();}}
+            @Override public void onReceivedError(WebView v,int code,String description,String failingUrl){
+                if((ORIGIN+"studio.html").equals(failingUrl))v.post(()->v.loadUrl(LOCAL_STUDIO));
+            }
+            public void onPageFinished(WebView v,String url){if((ORIGIN+"studio.html").equals(url)||LOCAL_STUDIO.equals(url)){js("window.tvInput="+ConsoleDock.isTV(ConsoleStudio.this));sync();}}
         });
-        if(BuildConfig.REMOTE_BUILD)web.loadUrl(ORIGIN+"studio.html");
-        else try{
-            String html=asset("studio.html").replace("<link rel=\"stylesheet\" href=\"studio.css\">","<style>"+asset("studio.css")+"</style>");
-            for(String script:new String[]{"studio.js","tv-keyboard.js"})html=html.replace("<script src=\""+script+"\"></script>","<script>"+asset(script)+"</script>");
-            web.loadDataWithBaseURL(ORIGIN+"studio.html",html,"text/html","UTF-8",null);
-        }catch(IOException e){web.loadUrl(ORIGIN+"studio.html");}
+        StickNavigation.attach(web);web.loadUrl(ORIGIN+"studio.html");
     }
     private String asset(String name)throws IOException{
         try(InputStream in=getAssets().open("catalog/"+name);ByteArrayOutputStream out=new ByteArrayOutputStream()){

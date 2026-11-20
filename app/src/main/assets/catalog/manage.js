@@ -35,7 +35,7 @@ function drawManage(){
  function act(name,fn,parent=block,key=name){const b=button(parent,name,fn);b.dataset.key=key;return b}
  if(managePage==="Einstellungen"){
   act("Darstellung",()=>native("studio","appearance"));act("Systemupdate",()=>native("studio","updates"));
-  act("Speicher",()=>manage("Speicher"));act("Verbindung",()=>manage("Verbindung"));act("Bild und Streaming",()=>native("studio","video"));act("Ton",()=>native("studio","audio"));act("Controller und Eingabe",()=>native("studio","controller"));act("Weitere Optionen",()=>native("studio","advanced"));act("PC-Verwaltung koppeln",()=>native("pair"));
+  act("Speicher",()=>manage("Speicher"));act("Verbindung",()=>manage("Verbindung"));act("Bild und Streaming",()=>native("studio","video"));act("Ton",()=>native("studio","audio"));act("Bluetooth-Geräte",()=>native("bluetooth"));act("Controller und Eingabe",()=>native("studio","controller"));act("Weitere Optionen",()=>native("studio","advanced"));act("PC-Verwaltung koppeln",()=>native("pair"));
   act("Einrichtungsassistent",()=>native("setup"));act("Profil wechseln",()=>native("profile"));act("Energie",()=>native("power"))
  }else{
   if(controlData.error||!controlData.paired){
@@ -44,7 +44,10 @@ function drawManage(){
    const rows=trophyData?.rows||[];info(product.name,trophyData?.notice||(trophyData?rows.filter(r=>r.done).length+" von "+rows.length+" freigeschaltet":"Wird geladen …"));
    for(const r of rows){const box=info(r.name,r.done?"Freigeschaltet":"Noch gesperrt");box.tabIndex=0}
   }else if(managePage==="Speicher"){
-   for(const disk of controlData.disks||[]){const row=info("Laufwerk "+disk.name,bytes(disk.free)+" frei von "+bytes(disk.total));const m=document.createElement("progress");m.max=disk.total;m.value=disk.total-disk.free;row.append(m)}
+   for(const disk of controlData.disks||[]){const row=info("Laufwerk "+disk.name,bytes(disk.free)+" frei von "+bytes(disk.total));const m=document.createElement("progress");m.max=disk.total;m.value=disk.total-disk.free;row.append(m);
+    for(const game of Object.values(controlData.apps||{}).filter(g=>g.drive===disk.drive&&g.state==="installed").sort((a,b)=>b.size-a.size)){
+      const line=document.createElement("p");line.textContent=game.name+"　"+bytes(game.size);row.append(line)
+    }}
    act("Installierte Spiele verwalten",()=>{showStore();document.querySelectorAll("#filters button")[1]?.click()})
   }else if(managePage==="Verbindung"){
    info("PC erreichbar","Die verschlüsselte Heimnetzverbindung ist aktiv.");

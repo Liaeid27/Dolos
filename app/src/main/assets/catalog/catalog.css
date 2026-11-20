@@ -26,3 +26,5 @@ body.art canvas,body[data-page="store"] canvas{visibility:hidden;animation-play-
 body.art .homeSeal,body[data-page="store"] .homeSeal{display:none}
 
 .atlasCover{position:absolute;inset:0;background-size:800% 800%;background-repeat:no-repeat}.tile,.card .art{position:relative}.tile .atlasCover{height:150%;top:-25%}
+
+.tools #pairPad{width:auto;font-size:.65rem;white-space:nowrap;padding:0 .7rem;border-radius:1.2rem;background:#ffffff14}.tools #pairPad[hidden]{display:none}

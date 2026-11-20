@@ -60,8 +60,8 @@ function draw(){
 }
 async function discover(){
  if(loading||(loaded&&!errors.length))return;loading=true;errors=[];draw();
- const result=await Promise.allSettled([fetch("/deck").then(r=>r.json()).then(d=>d.posts.filter(x=>["boot_video","suspend_video"].includes(x.type)&&/^https:\/\/cdn\.steamdeckrepo\.com\/videos\/[\w.-]+\.webm$/.test(x.video)).map(x=>({id:"deck_"+x.id,title:x.title,mode:x.type==="boot_video"?"on":"off",author:x.user?.steam_name||"",source:sources[2],url:x.video,image:/^https:\/\/cdn\.steamdeckrepo\.com\/thumbnails\//.test(x.thumbnail)?x.thumbnail:""}))),
- fetch("/swap").then(r=>r.json()).then(d=>d.tree.filter(x=>/^vidswap\/vids\/[\w-]+\.webm$/i.test(x.path)).map(x=>{const name=x.path.split("/").pop().slice(0,-5);return {id:"swap_"+name,title:name.replace(/([a-z])([A-Z])/g,"$1 $2"),mode:"on",author:"AutoMcG · VidSwap",source:sources[3],url:"https://raw.githubusercontent.com/AutoMcG/steamdeck_tools/"+d.sha+"/"+x.path}}))]);
+ const result=await Promise.allSettled([fetch("https://studio.invalid/deck").then(r=>r.json()).then(d=>d.posts.filter(x=>["boot_video","suspend_video"].includes(x.type)&&/^https:\/\/cdn\.steamdeckrepo\.com\/videos\/[\w.-]+\.webm$/.test(x.video)).map(x=>({id:"deck_"+x.id,title:x.title,mode:x.type==="boot_video"?"on":"off",author:x.user?.steam_name||"",source:sources[2],url:x.video,image:/^https:\/\/cdn\.steamdeckrepo\.com\/thumbnails\//.test(x.thumbnail)?x.thumbnail:""}))),
+ fetch("https://studio.invalid/swap").then(r=>r.json()).then(d=>d.tree.filter(x=>/^vidswap\/vids\/[\w-]+\.webm$/i.test(x.path)).map(x=>{const name=x.path.split("/").pop().slice(0,-5);return {id:"swap_"+name,title:name.replace(/([a-z])([A-Z])/g,"$1 $2"),mode:"on",author:"AutoMcG · VidSwap",source:sources[3],url:"https://raw.githubusercontent.com/AutoMcG/steamdeck_tools/"+d.sha+"/"+x.path}}))]);
  rows=result.flatMap((r,i)=>{if(r.status==="fulfilled")return r.value;errors.push(sources[i+2]);return rows.filter(x=>x.source===sources[i+2])});
  loaded=true;loading=false;if(page==="library"&&!selected)draw()
 }

@@ -92,3 +92,13 @@ Beim Aufwecken wird zusätzlich ein an das passende lokale Subnetz adressiertes 
 Vor dem Spielstart wählt Dolos eine PC-Adresse im direkt angeschlossenen Subnetz eines Ethernet- oder WLAN-Netzes auf Android. Für den Stream bindet Dolos den Prozess an dieses Netz. Mobilfunk und virtuelle Tunnel sind keine Streaming-Ziele. Ohne passenden Heimnetzpfad bricht der Start mit einem Hinweis ab. Unter Einstellungen → Konsole und Verbindung wird nach einem erfolgreichen Verbindungsaufbau der zuletzt verwendete Transport mit der PC-Adresse angezeigt.
 
 Im Hochformat öffnet das Zahnrad die vollständige Kategorienliste. Im Querformat stehen die Kategorien links und die Optionen rechts. Dolos-PC → Einrichtung führt durch dieselben beiden Kopplungen wie der Assistent auf Android. Der erste Code mit vier Ziffern kommt von Android, der zweite mit sechs Ziffern vom PC.
+
+## Build 329
+
+Unter **Store → Spiel → Installieren** die Steam-Bibliothek auswählen. Dolos-PC erkennt die deutsche und englische Steam-Speicherortauswahl. Für das gewählte Spiel prüft es den Titel, den Laufwerksbuchstaben und die markierte Zeile vor dem Bestätigen. Unbekannte Dialoge bleiben offen. Unter **Einstellungen → Konsole und Verbindung → Speicher** stehen Laufwerke mit belegtem Speicher und installierten Spielen.
+
+Im Menü bewegt der linke Stick den Fokus. OK oder A öffnet die Sucheingabe. Die Menütaste oder Y öffnet die Spieloptionen. Im Stream Start oder Select mindestens eine halbe Sekunde halten und loslassen, um das Spielmenü zu öffnen.
+
+Apollo erzeugt das virtuelle Display beim Streamstart. Dolos-PC ordnet das Spielfenster anhand von Prozess, Monitor und tatsächlicher Pixelposition zu. Für einen dunklen PC-Monitor in Apollo unter Audio/Video die automatische Displaykonfiguration auf „Nur den angegebenen Bildschirm aktivieren“ stellen. Diese Apollo-Einstellung gilt auch für andere Streams desselben Hosts. Das Konsolenmenü läuft auf dem Android-Gerät.
+
+Dolos-PC bereitet Cover, Beschreibungen und Trailer-Adressen im Hintergrund vor. Beim ersten Start wächst der Medienbestand schrittweise. Trailer werden bei der Wiedergabe vom Steam-CDN geladen. Zum Aktualisieren auf anderen PCs die Dateien aus dem PC-Paket übernehmen und die PC-Verwaltung neu starten. Für neue profilspezifische Startparameter den Store einmal mit Administratorrechten aktualisieren.

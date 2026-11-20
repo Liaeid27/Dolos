@@ -220,6 +220,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         launchCurtain=ConsoleBoot.curtain(this,Catalog.title(getIntent().getStringExtra(EXTRA_APP_NAME)==null?"Spiel":getIntent().getStringExtra(EXTRA_APP_NAME)));
 
+        ConsoleBoot.gameArt(this,launchCurtain);
+
         // Read the stream preferences
         prefConfig = PreferenceConfiguration.readPreferences(this);
         if(BuildConfig.REMOTE_BUILD && getIntent().getBooleanExtra("remoteLimited",false)){
@@ -1370,7 +1372,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             StringBuilder b=new StringBuilder();for(int i=0;i<12;i++)b.append(String.format(java.util.Locale.US,"%02x",bytes[i]&255));key=b.toString();
         }catch(Exception ignored){}
         screenKey=key;final String path="/foreground/"+key,host=getIntent().getStringExtra(EXTRA_HOST);
-        final android.widget.Button exit=new android.widget.Button(this);exit.setText("Zur Startseite");exit.setAllCaps(false);
+        final android.widget.Button exit=new android.widget.Button(this);exit.setText("Zur Startseite　 ·　 Im Spiel: Start oder Select halten");exit.setAllCaps(false);
         exit.setOnClickListener(v->finish());
         FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-2,-2,android.view.Gravity.BOTTOM|android.view.Gravity.CENTER_HORIZONTAL);
         lp.bottomMargin=(int)(24*getResources().getDisplayMetrics().density);launchCurtain.addView(exit,lp);
@@ -1416,11 +1418,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         if(!screenKey.isEmpty()&&pin!=null&&token!=null){
                             String pc=launch.getStringExtra(EXTRA_HOST);
                             org.json.JSONObject ack=ControlLink.request(pc,"/screen/"+screenKey,new org.json.JSONObject().put("action","close"),pin,token);
+                            if(!ack.optBoolean("accepted") && http.getCurrentGame(http.getServerInfo(true))==0){runOnUiThread(this::finish);return;}
                             if(!ack.optBoolean("accepted"))throw new java.io.IOException("Spielfenster nicht erreichbar. Stream über das Kontrollzentrum trennen.");
                             Thread.sleep(700);
                             if(ControlLink.request(pc,"/foreground/"+screenKey,null,pin,token).optBoolean("visible"))throw new java.io.IOException("Prüfe, ob das Spiel das Beenden bestätigen möchte.");
                         }
-                        if(!http.quitApp()) throw new java.io.IOException("Sitzung konnte nicht beendet werden");
+                        if(http.getCurrentGame(http.getServerInfo(true))!=0 && !http.quitApp()) throw new java.io.IOException("Sitzung konnte nicht beendet werden");
                         runOnUiThread(this::finish);
                     } catch(Exception e) {
                         runOnUiThread(()->Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show());
@@ -1434,7 +1437,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         int key=event.getKeyCode();
         boolean remoteBack=key==KeyEvent.KEYCODE_BACK && !event.isFromSource(android.view.InputDevice.SOURCE_GAMEPAD);
         boolean heldStart=false;
-        if(connected && key==KeyEvent.KEYCODE_BUTTON_START) {
+        if(connected && (key==KeyEvent.KEYCODE_BUTTON_START || key==KeyEvent.KEYCODE_BUTTON_SELECT)) {
             if(event.getAction()==KeyEvent.ACTION_DOWN) return true;
             heldStart=event.getEventTime()-event.getDownTime()>=550;
             if(!heldStart) {

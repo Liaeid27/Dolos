@@ -41,11 +41,13 @@ function pcArt(g,kind){
 let atlasHost="",atlasRev="",atlasCells=new Map(),atlasPages=new Map();
 function restoreArtwork(host){
  atlasHost=host;
+ try{pcMedia=JSON.parse(localStorage.getItem("dolos.media."+host))||{}}catch(e){}
  try{const saved=JSON.parse(localStorage.getItem("dolos.artwork."+host));if(saved){controlData.pcArtwork=saved.art;applyAtlas(saved.atlas)}}catch(e){}
 }
 function applyAtlas(def){
  if(!atlasHost||!def?.rev||atlasRev===def.rev||!Array.isArray(def.ids))return;
  atlasRev=def.rev;atlasCells=new Map(def.ids.map((id,i)=>[id,i]));atlasPages.clear();
+ if(def.ids.length){const first=new Image();atlasPages.set(0,new Promise(resolve=>{first.onload=()=>resolve(true);first.onerror=()=>resolve(false);first.src="/artwork/0/atlas/"+atlasRev}))}
 }
 function paintAtlas(box,g){
  const n=atlasCells.get(g.steamId);if(n==null)return false;
@@ -62,7 +64,13 @@ function paintAtlas(box,g){
  });return true;
 }
 function art(box,g){if(paintAtlas(box,g))return;if(window.remoteArt){remoteArt(box,g);return;}box.replaceChildren();const label=document.createElement("span");label.className="placeholder";label.textContent=g.name;box.append(label);
- if(g.art){const im=new Image();im.alt="";im.loading=box.className==="art"?"lazy":"eager";im.onload=()=>{label.remove();classifyCover(g,im)};im.onerror=()=>{if(im.getAttribute("src")!==g.art){im.src=g.art;return}im.remove();classifyCover(g,null)};im.src=pcArt(g,"cover")||g.art;box.prepend(im)}}
+ const urls=[...new Set([pcArt(g,"cover"),g.art,/^\d{1,10}$/.test(g.steamId||"")&&"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/"+g.steamId+"/library_600x900.jpg"].filter(Boolean))];
+ if(!urls.length)return;
+ const im=new Image();im.alt="";im.loading=box.className==="art"?"lazy":"eager";im.decoding="async";
+ im.onload=()=>{label.remove();classifyCover(g,im)};
+ im.onerror=()=>{if(urls.length){im.src=urls.shift();return}im.remove();classifyCover(g,null)};
+ im.src=urls.shift();box.prepend(im);
+}
 function background(g){
  if(window.remoteWall){remoteWall(g);return;}
  const key=g?.id||"";if(key===lastWall)return;lastWall=key;const token=++wallToken,walls=document.querySelectorAll(".wall");
@@ -105,7 +113,15 @@ function showHome(){
 }
 function download(g){return ["cached","owned","family"].includes(g.state)}
 function playGame(g){
- if(download(g)){manage("Downloads");native("install",g.id)}else native("play",g.id)
+ if(download(g)){selectInstallDrive(g)}else native("play",g.id)
+}
+function selectInstallDrive(g){
+ stopMedia();optionFocus=document.activeElement;
+ const box=$(".gameSheet");box.replaceChildren();const h=document.createElement("h2");h.textContent="Installationsort";box.append(h);
+ const disks=(controlData.disks||[]).filter(d=>d.drive);
+ for(const disk of disks)button(box,disk.drive+"　"+bytes(disk.free)+" frei",()=>{closeOptions();manage("Downloads");native("install",g.id+"?drive="+encodeURIComponent(disk.drive))});
+ if(!disks.length){const note=document.createElement("p");note.textContent="Dolos-PC aktualisieren und die PC-Verbindung prüfen.";box.append(note);button(box,"Verbindung prüfen",()=>{closeOptions();manage("Verbindung")})}
+ button(box,"Abbrechen",closeOptions);$("#gameOptions").hidden=false;box.querySelector("button").focus()
 }
 function playCurrent(){const g=current();if(g.id)playGame(g);else showStore()}
 const orderNames=["Name A–Z","Name Z–A","Installierte zuerst","Hinzugefügte zuerst","Zuletzt gespielt"];

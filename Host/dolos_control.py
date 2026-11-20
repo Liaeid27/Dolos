@@ -22,6 +22,23 @@ from save_times import subnautica_slots
 ART_FILES={}
 ART_REVISIONS={}
 ATLAS={}
+MEDIA={}
+def store_worker():
+    from store_cache import update,warm_heroes
+    folder=DATA/"store-media"
+    for path in folder.glob("*.json"):
+        try:
+            row=json.loads(path.read_text(encoding="utf8"))
+            if row.get("header"):MEDIA[path.stem]=row
+        except (ValueError,OSError):continue
+    while True:
+        if CATALOG:
+            try:
+                update(folder,CATALOG,ART_FILES,MEDIA)
+                warm_heroes(folder,ART_FILES,MEDIA)
+            except (ValueError,OSError):pass
+        time.sleep(10 if not CATALOG else 300)
+
 def profile_helper_ready():
     helper=Path(os.environ["ProgramFiles"])/"Apollo"/"config"/"aster-steam-aktion.py"
     try:return helper.read_bytes()==Path(__file__).with_name("steam_aktion.py").read_bytes()
@@ -54,8 +71,16 @@ def refresh_catalog():
     STORE_LINKS=json.loads(links.read_text(encoding="utf8")) if links.is_file() else {}
     global ART_FILES,ART_REVISIONS,ATLAS
     ART_FILES=cached_art(steam,games)
+    for sid,(_,image,*rest) in games.items():
+        hero=DATA/"store-media"/(sid+"-hero.jpg")
+        if hero.is_file():ART_FILES.setdefault((sid,"hero"),hero)
+        for candidate in (DATA/"store-media"/(sid+".jpg"),artwork/"aster-grid-art"/(sid+".art"),image,artwork/"aster-steam-art"/(sid+".jpg")):
+            if candidate and candidate.is_file():
+                ART_FILES.setdefault((sid,"cover"),candidate)
+                break
     revisions={}
     for (sid,kind),path in ART_FILES.items():
+        if kind=="cover":COVERS[sid]=True
         revisions.setdefault(sid,{})[kind]=int(path.stat().st_mtime)
     ART_REVISIONS=revisions
     from cover_atlas import prepare
@@ -69,7 +94,7 @@ def refresh_catalog():
         if folder.is_dir():
             times.extend(subnautica_slots(folder))
             usage=shutil.disk_usage(folder)
-            disks.append(dict(name=folder.drive or folder.name,total=usage.total,free=usage.free))
+            disks.append(dict(name=folder.drive or folder.name,drive=folder.drive,total=usage.total,free=usage.free))
     SAVE_TIMES={'264710':times} if len({s['slot'] for s in times})==len(times) else {}
     DISKS=disks
 
@@ -118,7 +143,7 @@ def manifests():
                 active=bool(flags&(1048576|2097152|4194304|262144|524288|512))
                 state="paused" if flags&256 else "staging" if flags&(2097152|4194304) else "downloading" if active else "installed" if flags&4 else "waiting"
                 staged=state=="staging"
-                apps[g["appid"]]={"id":g["appid"],"name":g["name"],"state":state,"done":int(g.get("BytesStaged" if staged else "BytesDownloaded",0)),"total":int(g.get("BytesToStage" if staged else "BytesToDownload",0))}
+                apps[g["appid"]]={"id":g["appid"],"name":g["name"],"state":state,"drive":folder.drive,"size":int(g.get("SizeOnDisk",0)),"done":int(g.get("BytesStaged" if staged else "BytesDownloaded",0)),"total":int(g.get("BytesToStage" if staged else "BytesToDownload",0))}
             except (ValueError,KeyError,OSError,SyntaxError):continue
     return apps
 
@@ -130,10 +155,14 @@ def allowed(key):
     expand(steam_path(),games,owned if owned.is_file() else None)
     return str(key) in games
 
-def steam_dialog(name,mode="inspect"):
+def steam_dialog(name,mode="inspect",drive=None):
     try:
         cmd=["powershell.exe","-NoProfile","-NonInteractive","-File",str(Path(__file__).with_name("DolosDialog.ps1")),
              "-SteamRoot",str(steam_path()),"-Title",name,"-Action",mode]
+        if drive and mode in ("inspect","install","confirm"):
+            cmd=["powershell.exe","-NoProfile","-NonInteractive","-File",str(Path(__file__).with_name("SteamInstall.ps1")),
+                 "-SteamRoot",str(steam_path()),"-Title",name,"-Drive",drive]
+            if mode!="inspect":cmd.append("-Install")
         result=subprocess.run(cmd,capture_output=True,timeout=6,creationflags=subprocess.CREATE_NO_WINDOW)
         return json.loads(result.stdout.decode("utf-8-sig")) if result.returncode==0 else {}
     except (ValueError,OSError,subprocess.TimeoutExpired):return {}
@@ -159,14 +188,17 @@ def worker():
         try:
             apps=manifests();queue_step(apps)
             pending=next((q.copy() for q in QUEUE if q.get("sent") and apps.get(q["id"],{}).get("state") not in ("downloading","staging")),None)
-            prompt=steam_dialog(pending["name"]) if pending else {}
+            prompt=steam_dialog(pending["name"],drive=pending.get("drive")) if pending else {}
             if pending and prompt:
                 prompt["id"]=pending["id"]
                 if pending["action"]=="install" and prompt.get("confirm","").casefold() in ("install","installieren"):
                     with LOCK:
                         queued=next((q for q in QUEUE if q["id"]==pending["id"] and q.get("sent")),None)
-                        if queued and not PAUSED and not queued.get("confirmed") and steam_dialog(pending["name"],"install"):
-                            queued["confirmed"]=True;write("queue.json",QUEUE);prompt={}
+                        ready=queued and not PAUSED and not queued.get("confirmed")
+                    if ready and steam_dialog(pending["name"],"install",pending.get("drive")):
+                        with LOCK:
+                            if queued in QUEUE:
+                                queued["confirmed"]=True;write("queue.json",QUEUE);prompt={}
             with LOCK:LAST={"apps":apps,"updated":int(time.time()),"prompt":prompt,"queue":list(QUEUE),"paused":PAUSED}
         except Exception:
             with LOCK:LAST=dict(LAST,error="Steam-Bibliothek derzeit nicht lesbar")
@@ -221,6 +253,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_header("Content-Length",str(release["size"]));self.end_headers()
                     shutil.copyfileobj(stream,self.wfile)
                 return
+            if self.path=="/status" and not post:
+                with LOCK:status=dict(LAST,hostBuild=329,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,profileLaunch=["105600","294100","1874880"] if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
+                return self.reply(200,status)
+            if self.path=="/catalog-media" and not post:return self.reply(200,MEDIA.copy())
             if self.path.startswith("/trophies/") and not post:
                 key=self.path.rsplit("/",1)[1]
                 return self.reply(200,trophies(key)) if key.isdecimal() and len(key)<=10 else self.reply(400,{})
@@ -254,7 +290,6 @@ class Handler(BaseHTTPRequestHandler):
                     if not req.get("seed") or str(slot) not in names:
                         names[str(slot)]=name.strip();write("profiles.json",names)
                     return self.reply(200,names)
-                if self.path=="/status" and not post:return self.reply(200,dict(LAST,coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,profileLaunch=["105600","294100","1874880"] if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED))
                 if self.path=="/select" and post:
                     key=str(req.get("id",""))
                     if not key.isdecimal() or len(key)>10 or LAST.get("apps",{}).get(key,{}).get("state")!="installed":
@@ -292,13 +327,15 @@ class Handler(BaseHTTPRequestHandler):
                     for field in ("sent","sentAt","confirmed","error"):q.pop(field,None)
                 elif action in ("confirm","cancel"):
                     q=next((x for x in QUEUE if x["id"]==key and x.get("sent")),None)
-                    if not q or LAST.get("prompt",{}).get("id")!=key or not steam_dialog(q["name"],action):
+                    if not q or LAST.get("prompt",{}).get("id")!=key or not steam_dialog(q["name"],action,q.get("drive")):
                         return self.reply(409,{"error":"Steam-Dialog geändert. Bitte aktualisieren."})
                     if action=="cancel":QUEUE.remove(q)
                     LAST["prompt"]={}
                 elif action=="dismiss":QUEUE[:]=[q for q in QUEUE if q["id"]!=key]
                 elif action in ("install","remove") and allowed(key):
-                    if not any(q["id"]==key for q in QUEUE):QUEUE.append({"id":key,"action":action,"sent":False,"name":str(req.get("name",key))[:120]})
+                    drive=req.get("drive")
+                    if drive and drive not in {disk.get("drive") for disk in DISKS}:return self.reply(400,{"error":"Steam-Laufwerk nicht verfügbar."})
+                    if not any(q["id"]==key for q in QUEUE):QUEUE.append({"drive":drive,"id":key,"action":action,"sent":False,"name":str(req.get("name",key))[:120]})
                 else:return self.reply(400,{"error":"Unbekannter Spieleintrag."})
                 write("queue.json",QUEUE);return self.reply(200,{"ok":True})
         except (ValueError,OSError,KeyError) as e:self.reply(400,{"error":"Anfrage fehlgeschlagen."})
@@ -308,7 +345,7 @@ def serve(host):
     cert,key=certificate();server=ThreadingHTTPServer((host,PORT),Handler)
     ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);ctx.minimum_version=ssl.TLSVersion.TLSv1_2;ctx.load_cert_chain(cert,key)
     server.socket=ctx.wrap_socket(server.socket,server_side=True)
-    QUEUE=read("queue.json",[]);PAUSED=read("paused.json",False);threading.Thread(target=catalog_worker,daemon=True).start();threading.Thread(target=worker,daemon=True).start();server.serve_forever()
+    QUEUE=read("queue.json",[]);PAUSED=read("paused.json",False);threading.Thread(target=store_worker,daemon=True).start();threading.Thread(target=catalog_worker,daemon=True).start();threading.Thread(target=worker,daemon=True).start();server.serve_forever()
 
 def enable():
     import ctypes

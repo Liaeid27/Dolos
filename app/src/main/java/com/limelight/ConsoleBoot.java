@@ -20,6 +20,36 @@ final class ConsoleBoot {
         word.animate().alpha(1).translationY(0).setDuration(450);
         return layer;
     }
+    static void gameArt(Game activity,FrameLayout layer){
+        Intent intent=activity.getIntent();String id=Catalog.steamId(intent.getStringExtra(Game.EXTRA_APP_NAME)==null?"":intent.getStringExtra(Game.EXTRA_APP_NAME));
+        String uuid=intent.getStringExtra(Game.EXTRA_PC_UUID);
+        if(uuid==null)return;
+        new Thread(()->{
+            android.graphics.Bitmap bitmap=null;
+            try{
+                java.io.File box=new java.io.File(new java.io.File(new java.io.File(activity.getCacheDir(),"boxart"),uuid),intent.getIntExtra(Game.EXTRA_APP_ID,0)+".png");
+                if(box.isFile())bitmap=android.graphics.BitmapFactory.decodeFile(box.toString());
+                org.json.JSONObject all=new org.json.JSONObject(activity.getSharedPreferences("dolos-control-"+uuid,0).getString("artwork","{}"));
+                org.json.JSONObject art=all.optJSONObject(id);
+                if(art!=null){
+                    String kind=art.has("hero")?"hero":"cover";
+                    try(java.io.InputStream in=RemoteMedia.hostArt(activity,uuid,"/artwork/"+id+"/"+kind+"/"+art.getLong(kind)).getData()){
+                        android.graphics.Bitmap local=android.graphics.BitmapFactory.decodeStream(in);if(local!=null)bitmap=local;
+                    }
+                }
+            }catch(Exception ignored){}
+            if(bitmap==null && id.matches("[0-9]{1,10}")){
+                try(java.io.InputStream in=RemoteMedia.fetch(activity,"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/"+id+"/header.jpg",false).getData()){bitmap=android.graphics.BitmapFactory.decodeStream(in);}catch(Exception ignored){}
+            }
+            final android.graphics.Bitmap image=bitmap;if(image==null)return;
+            activity.runOnUiThread(()->{
+                if(activity.isFinishing()||activity.isDestroyed())return;
+                ImageView backdrop=new ImageView(activity);backdrop.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                backdrop.setImageBitmap(image);backdrop.setAlpha(0);backdrop.setScaleX(1.05f);backdrop.setScaleY(1.05f);
+                layer.addView(backdrop,1,new FrameLayout.LayoutParams(-1,-1));backdrop.animate().alpha(.60f).scaleX(1f).scaleY(1f).setDuration(1200);
+            });
+        },"Dolos-Launch-Art").start();
+    }
     static void remove(FrameLayout layer) {
         if(layer.getParent() instanceof ViewGroup) ((ViewGroup)layer.getParent()).removeView(layer);
     }

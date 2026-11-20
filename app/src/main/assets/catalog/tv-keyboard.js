@@ -24,6 +24,9 @@
    if(!el||el.tagName!=="INPUT"||board.hasAttribute("open"))return;
    target=el;preview.textContent=el.value||"Suchen";draw();if(board.showModal)board.showModal();else{board.setAttribute("open","");board.style.cssText+=";position:fixed;inset:10% auto auto 10%;z-index:100"}keys.children[10].focus();
  };
+ Object.defineProperty(window,"tvInput",{configurable:true,get(){return this._tvInput},set(on){
+   this._tvInput=on;document.querySelectorAll("input[type=search],input[type=text],input:not([type])").forEach(el=>{el.readOnly=!!on;if(on)el.setAttribute("inputmode","none")})
+ }});
  window.closeTvKeyboard=close;
  document.addEventListener("click",event=>{if(window.tvInput&&event.target.matches("input[type=search],input[type=text],input:not([type])"))openTvKeyboard(event.target)},true);
  document.addEventListener("keydown",event=>{

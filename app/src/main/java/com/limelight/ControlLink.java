@@ -19,6 +19,8 @@ final class ControlLink {
     final ConsoleHome home;
     final ExecutorService io=Executors.newSingleThreadExecutor();
     volatile boolean busy,closed;
+    volatile long lastResponse;
+    int mediaCount=-1;
     String fingerprint;
     JSONObject snapshot=new JSONObject();
     ControlLink(ConsoleHome h){home=h;}
@@ -87,14 +89,15 @@ final class ControlLink {
             });
         }catch(Exception e){home.host.runOnUiThread(()->fail("Verwaltung unerreichbar. Dolos-PC öffnen und die Heimnetz-Freigabe prüfen."));}});
     }
-    void run(String action,String key,String name){
+    void run(String action,String key,String name){run(action,key,name,null);}
+    void run(String action,String key,String name,String drive){
         if(closed)return;
         if(action.equals("pair")){pair();return;}
         boolean polling=action.equals("status");
         if(polling&&busy)return;
         String host=address(),pin=prefs().getString("cert",null),token=prefs().getString("token",null);
         if(pin==null||token==null){fail("PC-Verwaltung noch nicht gekoppelt.");return;}
-        if(host==null){fail("PC offline. Einschalten oder Wecksignal senden.");return;}
+        if(host==null){fail("Die PC-Adresse wird noch ermittelt. Verbindung erneut prüfen.");return;}
         busy=true;io.execute(()->{
             try{
                 if(action.equals("power")||action.equals("sleep")){
@@ -106,9 +109,20 @@ final class ControlLink {
                     home.host.runOnUiThread(()->{if(!closed)home.console.web.evaluateJavascript("trophyResult("+JSONObject.quote(key)+","+result+")",null);});return;
                 }
                 if(!polling && !action.equals("measure") && !action.equals("profileNames")){
-                    request(host,"/queue",new JSONObject().put("action",action).put("id",key).put("name",name),pin,token);
+                    request(host,"/queue",new JSONObject().put("action",action).put("id",key).put("name",name).put("drive",drive),pin,token);
                 }
-                JSONObject status=request(host,"/status",null,pin,token);status.put("paired",true);
+                JSONObject status=request(host,"/status",null,pin,token);status.put("paired",true);lastResponse=SystemClock.elapsedRealtime();
+                String uuid=home.host.getIntent().getStringExtra(AppView.UUID_EXTRA);
+                if(uuid!=null){
+                    home.host.getSharedPreferences("studio",0).edit().putString("lastUuid",uuid).putString("lastHost",host).apply();
+                    JSONObject art=status.optJSONObject("pcArtwork");
+                    if(art!=null)prefs().edit().putString("artwork",art.toString()).apply();
+                }
+                int available=status.optInt("mediaCount",0);
+                if(!BuildConfig.REMOTE_BUILD && available>0 && (mediaCount<0 || available-mediaCount>=12 || status.optJSONArray("catalog")!=null && available==status.optJSONArray("catalog").length()&&available!=mediaCount)){
+                    JSONObject media=request(host,"/catalog-media",null,pin,token);mediaCount=available;
+                    home.host.runOnUiThread(()->{if(!closed)home.console.web.evaluateJavascript("receiveMedia("+media+")",null);});
+                }
                 JSONObject names=status.optJSONObject("profileNames");
                 if(names!=null){
                     SharedPreferences local=home.profiles();
@@ -157,7 +171,7 @@ final class ControlLink {
         }
         if(id.isEmpty()||id.length()>10){home.actions.play(game);return;}
         String host=address();
-        if(host==null){fail("PC offline.");return;}
+        if(host==null){fail("PC-Adresse noch nicht verfügbar.");return;}
         io.execute(()->{try{
             JSONObject status=request(host,"/status",null,prefs().getString("cert",null),prefs().getString("token",null));
             JSONObject apps=status.optJSONObject("apps");JSONObject g=apps==null?null:apps.optJSONObject(id);
@@ -169,7 +183,7 @@ final class ControlLink {
             home.host.runOnUiThread(()->{if(closed)return;
                 if(profile!=home.profile)return;
                 if(g!=null&&"installed".equals(g.optString("state")))home.actions.play(isolated?new AppView.AppObject(new com.limelight.nvstream.http.NvApp(game.toString(),home.console.liveAppId,false)):game);
-                else {home.console.web.evaluateJavascript("manage('Downloads')",null);run("install",id,home.displayName(game));}});
+                else {home.console.web.evaluateJavascript("selectInstallDrive(items.find(g=>g.steamId==="+JSONObject.quote(id)+"))",null);}});
         }catch(Exception e){home.host.runOnUiThread(()->{if(!closed){home.console.web.evaluateJavascript("manage('Verbindung')",null);fail(e instanceof IOException && e.getMessage()!=null?e.getMessage():"PC-Verwaltung nicht erreichbar.");}});}});
     }
     private String lastDisplayedProfile="";
