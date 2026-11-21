@@ -183,14 +183,11 @@ def screen(key,prepare=False,require_virtual=False):
             if style & 0x40000000:return False
             if not fits:
                 if u.IsZoomed(handle):u.ShowWindow(handle,9)
-                frame=wt.RECT(0,0,m.right-m.left,m.bottom-m.top)
-                exstyle=u.GetWindowLongW(handle,-20)
-                adjust=getattr(u,"AdjustWindowRectExForDpi",None)
-                if adjust and getattr(u,"GetDpiForWindow",None):
-                    adjust(ctypes.byref(frame),style,False,exstyle,u.GetDpiForWindow(handle))
-                else:u.AdjustWindowRectEx(ctypes.byref(frame),style,False,exstyle)
-                u.SetWindowPos(handle,None,m.left+frame.left,m.top+frame.top,
-                               frame.right-frame.left,frame.bottom-frame.top,0x0060)
+                outer=wt.RECT()
+                if not u.GetWindowRect(handle,ctypes.byref(outer)):return False
+                u.SetWindowPos(handle,None,m.left+outer.left-origin.x,m.top+outer.top-origin.y,
+                               m.right-m.left+outer.right-outer.left-rect.right,
+                               m.bottom-m.top+outer.bottom-outer.top-rect.bottom,0x0060)
             u.SetWindowPos(handle,None,0,0,0,0,0x0013)
             u.SetForegroundWindow(handle)
         return False
