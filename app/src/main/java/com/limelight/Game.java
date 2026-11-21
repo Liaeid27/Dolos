@@ -248,6 +248,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // Listen for non-touch events on the game surface
         streamView = findViewById(R.id.surfaceView);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) streamView.setTranslationX(-32768f);
         streamView.setOnGenericMotionListener(this);
         streamView.setOnKeyListener(this);
         streamView.setInputCallbacks(this);
@@ -1366,6 +1367,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         startActivity(home);overridePendingTransition(0,0);finish();
     }
     private String screenKey="";
+    private void setGamePictureVisible(boolean visible) {
+        // Keep the decoder surface alive while moving its video plane behind the launch screen.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) streamView.setTranslationX(visible ? 0f : -32768f);
+        launchCurtain.setVisibility(visible ? View.GONE : View.VISIBLE);
+    }
     private void guardGameDisplay() {
         android.content.SharedPreferences prefs=getSharedPreferences("dolos-control-"+getIntent().getStringExtra(EXTRA_PC_UUID),MODE_PRIVATE);
         String pin=prefs.getString("cert",null),token=prefs.getString("token",null);
@@ -1382,7 +1388,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }catch(Exception ignored){}
         screenKey=key;final String path="/foreground/"+key,host=getIntent().getStringExtra(EXTRA_HOST);
         final android.widget.Button exit=new android.widget.Button(this);exit.setText("Zur Startseite　 ·　 Spielmenü-Taste halten");exit.setAllCaps(false);
-        exit.setOnClickListener(v->finish());
+        exit.setOnClickListener(v->returnToLibrary());
         FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-2,-2,android.view.Gravity.BOTTOM|android.view.Gravity.CENTER_HORIZONTAL);
         lp.bottomMargin=(int)(24*getResources().getDisplayMetrics().density);launchCurtain.addView(exit,lp);
         new Thread(()->{
@@ -1391,12 +1397,13 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 ControlLink.request(host,"/launch",new org.json.JSONObject().put("request",nonce).put("id",screenKey).put("profile",getIntent().getIntExtra("launchProfile",0)),pin,token);
             }catch(Exception e){runOnUiThread(()->ConsoleDock.show(this,e.getMessage(),new String[]{"Zur Startseite"},i->returnToLibrary()));return;}
             boolean previous=false,wasRunning=false;int readySamples=0,closedSamples=0;long prepared=0;
-            final Runnable cover=()->{if(!stopCurtainMonitor&&!isFinishing())launchCurtain.setVisibility(View.VISIBLE);};
+            long waitingSince=android.os.SystemClock.elapsedRealtime();
+            final Runnable cover=()->{if(!stopCurtainMonitor&&!isFinishing())setGamePictureVisible(false);};
             while(!stopCurtainMonitor){
-                boolean visible=false;
+                boolean visible=false;String stage="";
                 try{
                     org.json.JSONObject state=ControlLink.request(host,path,null,pin,token);
-                    visible=state.optBoolean("visible");
+                    visible=state.optBoolean("visible");stage=state.optString("stage");
                     if(state.optBoolean("running"))wasRunning=true;
                     if(wasRunning&&!visible&&state.has("running")&&!state.isNull("running")&&!state.optBoolean("running"))closedSamples++;else closedSamples=0;
                     if(closedSamples>=4){
@@ -1408,15 +1415,20 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     }
                     if(!visible&&android.os.SystemClock.elapsedRealtime()-prepared>3000){
                         prepared=android.os.SystemClock.elapsedRealtime();
-                        ControlLink.request(host,"/screen/"+screenKey,new org.json.JSONObject().put("action","prepare"),pin,token);
+                        visible=ControlLink.request(host,"/screen/"+screenKey,new org.json.JSONObject().put("action","prepare"),pin,token).optBoolean("visible");
                     }
                 }catch(Exception ignored){}
                 readySamples=visible?readySamples+1:0;final boolean show=readySamples>=2;
+                if(show)waitingSince=android.os.SystemClock.elapsedRealtime();
+                final boolean delayed=!show&&android.os.SystemClock.elapsedRealtime()-waitingSince>22000;
+                final boolean gameRunning=wasRunning;final String launchStage=stage;
                 final boolean changed=previous!=visible;runOnUiThread(()->{
                     if(stopCurtainMonitor||isFinishing())return;
+                    if(delayed&&!launchStage.isEmpty())exit.setText(launchStage+"　 ·　 Zur Startseite");
+                    else if(delayed)exit.setText(gameRunning?"Spiel läuft · Warte auf das Bild am Stream-Display　 ·　 Zur Startseite":"Warte auf das Spielfenster　 ·　 Zur Startseite");
                     launchCurtain.removeCallbacks(cover);
                     boolean covered=launchCurtain.getVisibility()==View.VISIBLE;
-                    launchCurtain.setVisibility(show?View.GONE:View.VISIBLE);
+                    setGamePictureVisible(show);
                     if(show){if(changed||covered)streamView.requestFocus();launchCurtain.postDelayed(cover,3000);}
                     else if(changed)exit.requestFocus();
                 });

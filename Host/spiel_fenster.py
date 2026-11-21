@@ -73,7 +73,7 @@ def capture_monitor():
         return True
     ctypes.windll.user32.EnumDisplayMonitors(None,None,visit,0)
     match=next((m for m in monitors if m.device.casefold()==name),None)
-    return match or (monitors[0] if len(monitors)==1 else None)
+    return match if name else (monitors[0] if len(monitors)==1 else None)
 
 def game_window(key,background=False):
     target=targets_now().get(key)
@@ -108,7 +108,7 @@ def screen(key,prepare=False):
     if dpi:dpi.restype=wt.HANDLE
     previous=dpi(wt.HANDLE(-4)) if dpi else None
     try:
-        handle=game_window(key,prepare)
+        handle=game_window(key,True)
         if not handle:return False
         info=capture_monitor()
         if not info:return False
@@ -116,18 +116,49 @@ def screen(key,prepare=False):
         if prepare and u.IsIconic(handle):u.ShowWindowAsync(handle,9)
         rect=wt.RECT();origin=wt.POINT()
         if not u.GetClientRect(handle,ctypes.byref(rect)) or not u.ClientToScreen(handle,ctypes.byref(origin)):return False
-        fits=all(abs(a-b)<=2 for a,b in ((origin.x,m.left),(origin.y,m.top),(origin.x+rect.right,m.right),(origin.y+rect.bottom,m.bottom)))
-        if fits and not u.IsIconic(handle) and u.GetForegroundWindow()==handle.value:return True
+        # Overscan and invisible frame borders are common with borderless engines.
+        fits=(origin.x<=m.left+2 and origin.y<=m.top+2 and
+              origin.x+rect.right>=m.right-2 and origin.y+rect.bottom>=m.bottom-2)
+        u.WindowFromPoint.argtypes=[wt.POINT];u.WindowFromPoint.restype=wt.HWND
+        u.GetAncestor.argtypes=[wt.HWND,wt.UINT];u.GetAncestor.restype=wt.HWND
+        def game_pixel(x,y):
+            window=u.WindowFromPoint(wt.POINT(x,y))
+            return window and u.GetAncestor(window,2)==handle.value
+        visible=fits and not u.IsIconic(handle) and all(
+            game_pixel(m.left+int((m.right-m.left)*x),m.top+int((m.bottom-m.top)*y))
+            for x,y in ((.5,.5),(.08,.08),(.92,.08),(.08,.92),(.92,.92)))
+        if visible:return True
         if prepare and not u.GetWindow(handle,4):
             style=u.GetWindowLongW(handle,-16)
             if style & 0x40000000:return False
             if not fits:
+                if u.IsZoomed(handle):u.ShowWindow(handle,9)
                 u.SetWindowLongW(handle,-16,ctypes.c_long(style & ~0x00cf0000))
                 u.SetWindowPos(handle,None,m.left,m.top,m.right-m.left,m.bottom-m.top,0x0060)
+            u.SetWindowPos(handle,None,0,0,0,0,0x0013)
             u.SetForegroundWindow(handle)
         return False
     finally:
         if previous:dpi(wt.HANDLE(previous))
+
+def launch_stage(key):
+    if not key.isascii() or not key.isdecimal() or len(key)>10:return ""
+    import datetime,re
+    try:
+        with (steam_path()/"logs/console_log.txt").open("rb") as log:
+            log.seek(max(0,log.seek(0,2)-65536))
+            lines=log.read().decode("utf8","replace").splitlines()
+        for line in reversed(lines):
+            if f"GameAction [AppID {key}," not in line or "changed task to " not in line:continue
+            timestamp=datetime.datetime.strptime(line[1:20],"%Y-%m-%d %H:%M:%S").timestamp()
+            if abs(time.time()-timestamp)>600:return ""
+            task=re.search(r"changed task to (\w+)",line)
+            return {"RunningInstallScript":"Steam richtet die Spielkomponenten ein",
+                    "SynchronizingCloud":"Steam gleicht Spielstände ab",
+                    "UpdatingApp":"Steam aktualisiert das Spiel",
+                    "ProcessingVulkanShaders":"Steam bereitet Shader vor"}.get(task[1] if task else "","")
+    except (OSError,ValueError):pass
+    return ""
 
 def playing(key):return screen(key)
 

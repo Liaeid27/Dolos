@@ -197,7 +197,7 @@ final class Catalog {
                 else if("setup".equals(action))ConsoleBoot.setup(home.host);
                 else if("wake".equals(action))((AppView)home.host).wakeHost();
                 else if(Arrays.asList("pair","status","measure","pause","resume").contains(action))home.link.run(action,"","");
-                else if(Arrays.asList("confirm","cancel","dismiss","retry").contains(action))home.link.run(action,u.getLastPathSegment(),"");
+                else if(Arrays.asList("confirm","cancel","dismiss","retry","downloadfirst","downloadcancel","downloadpause").contains(action))home.link.run(action,u.getLastPathSegment(),"");
                 else if(g!=null && "trophies".equals(action))home.link.run("trophies",steamId(g.toString()),"");
                 else if(g!=null && "savepath".equals(action))home.link.createSavePath(steamId(g.toString()));
                 else if(g!=null && "play".equals(action)){home.link.play(g);}

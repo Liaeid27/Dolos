@@ -221,6 +221,12 @@ document.addEventListener("keydown",e=>{
  if(e.key==="ContextMenu"){e.preventDefault();gameOptionsForFocus();return}
  const dir={ArrowRight:[1,0],ArrowLeft:[-1,0],ArrowDown:[0,1],ArrowUp:[0,-1]}[e.key];if(!dir||e.target===$("#search")&&dir[0])return;
  const active=document.activeElement;
+ if(page==="manage"&&managePage==="Downloads"&&$("#gameOptions").hidden&&$("#center").hidden&&dir[1]){
+  const row=active.closest("#manager section");
+  if(row){let target=dir[1]>0?row.nextElementSibling:row.previousElementSibling;
+   while(target){const b=target.matches("button")?target:target.querySelector("button");if(b){e.preventDefault();b.focus({preventScroll:true});b.scrollIntoView({block:"nearest"});return}target=dir[1]>0?target.nextElementSibling:target.previousElementSibling}
+  }
+ }
  if(page==="home"&&active.parentElement===$("#rail")&&$("#gameOptions").hidden&&$("#center").hidden){
     const vertical=document.body.classList.contains("enhanced")&&innerWidth>=innerHeight;
     const step=vertical?dir[1]:dir[0];

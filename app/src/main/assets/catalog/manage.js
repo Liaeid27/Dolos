@@ -11,6 +11,7 @@ function controlState(data){
  const previousAtlas=atlasRev;
  if(atlasHost&&data.pcArtwork){applyAtlas(data.coverAtlas);try{localStorage.setItem("dolos.artwork."+atlasHost,JSON.stringify({art:data.pcArtwork,atlas:data.coverAtlas}))}catch(e){}}
  const newArt=data.pcArtwork&&Object.keys(data.pcArtwork).length&&!controlData.pcArtwork;
+ if(data.error&&page==="manage"&&managePage==="Downloads"&&controlData.apps){controlData={...controlData,downloadError:data.error};drawManage();return}
  controlData=data;renderSaveInfo();
  if(newArt||previousAtlas!==atlasRev){
     if(page==="home"){for(const b of $("#rail").children){const g=items.find(i=>i.id===b.dataset.id);if(pcArt(g,"cover"))art(b,g)}lastWall=null;background(current())}
@@ -35,7 +36,12 @@ function controlState(data){
 }
 function bytes(n){return n>=1073741824?(n/1073741824).toFixed(1)+" GB":Math.round((n||0)/1048576)+" MB"}
 function drawManage(){
- const block=$("#manager"),old=document.activeElement?.dataset.key;const serial=JSON.stringify([managePage,controlData,measurement]);if(serial===lastRows)return;lastRows=serial;block.replaceChildren();
+ const live=$("#manager"),downloads=managePage==="Downloads",old=document.activeElement?.dataset.key;
+ const serial=JSON.stringify(downloads?[managePage,controlData.queue,controlData.apps,controlData.prompt,controlData.paused,controlData.downloadAction,controlData.downloadError,controlData.error,controlData.paired]:[managePage,controlData,measurement]);
+ if(serial===lastRows)return;
+ lastRows=serial;
+ const block=downloads?document.createElement("div"):live;
+ if(!downloads)block.replaceChildren();
  function info(title,text){const box=document.createElement("section"),h=document.createElement("h3"),p=document.createElement("p");h.textContent=title;p.textContent=text;box.append(h,p);block.append(box);return box}
  function act(name,fn,parent=block,key=name){const b=button(parent,name,fn);b.dataset.key=key;return b}
  if(managePage==="Einstellungen"){
@@ -65,10 +71,22 @@ function drawManage(){
   }else{
    const list=controlData.queue||[],apps=controlData.apps||{},ids=new Set(list.map(x=>x.id));
    const extra=Object.values(apps).filter(g=>["downloading","staging","paused","waiting"].includes(g.state)&&!ids.has(g.id));
+   const order={downloading:0,staging:0,waiting:1,paused:2};
+   extra.sort((a,b)=>order[a.state]-order[b.state]||(a.scheduled||0)-(b.scheduled||0));
+   const command=controlData.downloadAction;
+   if(controlData.downloadError||command?.error||command?.pending){
+    info("Steam",controlData.downloadError||command.error||"Steam verarbeitet den Auftrag …").dataset.key="notice"
+   }
    if(!list.length&&!extra.length)info("Keine aktiven Downloads","Installationen aus dem Store erscheinen hier.");
    for(const job of [...list,...extra]){
-    const g=apps[job.id]||{},s=({paused:"Von Steam pausiert",staging:"Dateien werden vorbereitet",downloading:"Wird heruntergeladen",waiting:"Wartet auf Steam"})[g.state]||(job.error||(!job.sent?"In Warteschlange":job.direct?"Installationsauftrag an Steam gesendet":job.confirmed?"Installation bestätigt · Steam startet den Download":"Installationsdialog wird geprüft"));
+    const g=apps[job.id]||{},s=job.held?"Angehalten":({paused:"Von Steam pausiert",staging:"Dateien werden vorbereitet",downloading:"Wird heruntergeladen",waiting:"Wartet auf Steam"})[g.state]||(job.error||(!job.sent?"In Warteschlange":job.direct?"Installationsauftrag an Steam gesendet":job.confirmed?"Installation bestätigt · Steam startet den Download":"Installationsdialog wird geprüft"));
     const row=info(job.name,s+(g.total>0&&g.state!=="installed"?" · "+bytes(g.done)+" von "+bytes(g.total):""));
+    row.dataset.key="job"+job.id;
+    if((g.state&&g.state!=="installed"||ids.has(job.id)&&!job.sent&&job.action==="install")&&controlData.hostBuild>=331){
+     act("Jetzt herunterladen",()=>native("downloadfirst",job.id),row,"first"+job.id);
+     act("Anhalten",()=>native("downloadpause",job.id),row,"hold"+job.id);
+     act("Abbrechen",()=>confirmTransfer(job.id,job.name),row,"stop"+job.id);
+    }
     if(g.total>0&&g.state!=="installed"){const meter=document.createElement("progress");meter.max=g.total;meter.value=g.done;row.append(meter)}
     if(job.sentAt && Date.now()/1000-job.sentAt>40 && !controlData.prompt?.id && !["staging","downloading","paused"].includes(g.state)){
      const note=document.createElement("p");note.textContent=job.direct?"Steam hat den Download noch nicht begonnen. Prüfe den verfügbaren Speicher und die Steam-Verbindung.":"Steam hat noch keinen vom TV bedienbaren Dialog gemeldet.";row.append(note);if(job.action==="install")act("Installation erneut anfordern",()=>native("retry",job.id),row,"retry"+job.id)
@@ -76,13 +94,45 @@ function drawManage(){
     const prompt=controlData.prompt;
     if(prompt?.id===job.id){const t=document.createElement("p");t.textContent=prompt.text;row.append(t);
       act(prompt.confirm,()=>native("confirm",job.id),row,"confirm"+job.id);act("Abbrechen",()=>native("cancel",job.id),row,"cancel"+job.id)}
-    if(ids.has(job.id)&&!job.sent)act("Auftrag entfernen",()=>native("dismiss",job.id),row,"dismiss"+job.id);
+    if(controlData.hostBuild<331&&ids.has(job.id)&&!job.sent)act("Auftrag entfernen",()=>native("dismiss",job.id),row,"dismiss"+job.id);
     if(job.sent&&!prompt?.id&&!["staging","downloading"].includes(g.state))act("Auftrag aus Liste nehmen",()=>native("dismiss",job.id),row,"dismiss"+job.id)
    }
    act(controlData.paused?"Warteschlange fortsetzen":"Neue Aufträge anhalten",()=>native(controlData.paused?"resume":"pause"))
   }
  }
- act("Zurück",showHome);const focus=[...block.querySelectorAll("button")].find(b=>b.dataset.key===old)||block.querySelector("button");if(focus)focus.focus()
+ act("Zurück",showHome);
+ if(downloads){
+  const active=document.activeElement,inside=live.contains(active),scroller=$("#manage"),top=scroller.scrollTop;
+  syncDownloads(live,block);
+  if(inside&&!active.isConnected){
+   const next=[...live.querySelectorAll("button")].find(b=>b.dataset.key===old)||live.querySelector("button");
+   next?.focus({preventScroll:true});scroller.scrollTop=top;
+  }else if(!inside&&!live.dataset.downloads){live.querySelector("button")?.focus({preventScroll:true})}
+  live.dataset.downloads="1";return;
+ }
+ delete live.dataset.downloads;
+ const focus=[...block.querySelectorAll("button")].find(b=>b.dataset.key===old)||block.querySelector("button");if(focus)focus.focus()
+}
+function syncDownloads(parent,source){
+ const key=(n,i)=>n.dataset.key||n.tagName+i;
+ const existing=new Map(Array.from(parent.children,(n,i)=>[key(n,i),n]));
+ Array.from(source.children).forEach((next,i)=>{
+  const id=key(next,i),current=existing.get(id);
+  if(!current||current.tagName!==next.tagName){parent.insertBefore(next,parent.children[i]||null);return}
+  existing.delete(id);
+  if(parent.children[i]!==current)parent.insertBefore(current,parent.children[i]||null);
+  if(next.tagName==="SECTION")syncDownloads(current,next);
+  else if(next.tagName==="PROGRESS"){if(current.max!==next.max)current.max=next.max;if(current.value!==next.value)current.value=next.value}
+  else {if(current.textContent!==next.textContent)current.textContent=next.textContent;if(next.onclick)current.onclick=next.onclick}
+ });
+ for(const unused of existing.values())unused.remove()
+}
+function confirmTransfer(id,name){
+ optionFocus=document.activeElement;const box=$(".gameSheet");box.replaceChildren();
+ const title=document.createElement("h2");title.textContent=name;box.append(title);
+ button(box,"Weiter herunterladen",closeOptions);
+ button(box,"Download abbrechen",()=>{closeOptions();native("downloadcancel",id)});
+ $("#gameOptions").hidden=false;box.querySelector("button").focus()
 }
 setInterval(()=>{if(!document.hidden&&page==="manage"&&!["Trophäen","Einstellungen"].includes(managePage))native("status")},5000);
 

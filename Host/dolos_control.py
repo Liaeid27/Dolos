@@ -13,6 +13,7 @@ QUEUE=[]
 PAUSED=False
 ATTEMPTS=collections.deque(maxlen=24)
 PENDING_OFF=False
+DOWNLOAD_ACTION={}
 CATALOG=[]
 REQUIRED={}
 SIZE_STAMP=None
@@ -155,11 +156,60 @@ def manifests():
                 remaining=int(g.get("BytesToDownload",0))>int(g.get("BytesDownloaded",0))
                 staging=int(g.get("BytesToStage",0))>int(g.get("BytesStaged",0))
                 active=active or remaining or staging or bool(flags & (2|32|1024|65536|131072))
-                state="paused" if flags&256 else "staging" if flags&(2097152|4194304) else "downloading" if active else "installed" if flags&4 else "waiting"
+                scheduled=int(g.get("ScheduledAutoUpdate",0))
+                state=("staging" if flags&(2097152|4194304) else "downloading" if flags&(1048576|262144|524288)
+                       else "paused" if flags&256 or (flags&32 and not scheduled) else "waiting" if scheduled or flags&1024 else
+                       "paused" if active and not flags&65536 else "downloading" if active else "installed" if flags&4 else "waiting")
                 staged=state=="staging"
-                apps[g["appid"]]={"id":g["appid"],"name":g["name"],"state":state,"drive":folder.drive,"size":int(g.get("SizeOnDisk",0)),"done":int(g.get("BytesStaged" if staged else "BytesDownloaded",0)),"total":int(g.get("BytesToStage" if staged else "BytesToDownload",0))}
+                apps[g["appid"]]={"id":g["appid"],"name":g["name"],"state":state,"drive":folder.drive,"scheduled":scheduled,"partial":not int(g.get("buildid",0)) and not g.get("InstalledDepots") and not flags&4,"size":int(g.get("SizeOnDisk",0)),"done":int(g.get("BytesStaged" if staged else "BytesDownloaded",0)),"total":int(g.get("BytesToStage" if staged else "BytesToDownload",0))}
             except (ValueError,KeyError,OSError,SyntaxError):continue
     return apps
+
+def download_command(key,action):
+    global DOWNLOAD_ACTION
+    if action not in ("downloadfirst","downloadpause","downloadcancel") or not key.isdecimal() or len(key)>10:
+        return False,"Unbekannter Download."
+    with LOCK:
+        job=next((q for q in QUEUE if q["id"]==key and q["action"]=="install" and not q.get("sent")),None)
+        if job:
+            if action=="downloadpause":job["held"]=True
+            elif action=="downloadcancel":QUEUE.remove(job)
+            else:
+                job.pop("held",None);QUEUE.remove(job);QUEUE.insert(0,job)
+            write("queue.json",QUEUE)
+            return True,None
+    game=manifests().get(key)
+    if not game or game["state"]=="installed":return False,"Steam hat diesen Download bereits abgeschlossen oder entfernt."
+    with LOCK:
+        if DOWNLOAD_ACTION.get("pending"):return False,"Steam verarbeitet noch den letzten Auftrag."
+        DOWNLOAD_ACTION={"id":key,"pending":True}
+    def run():
+        global DOWNLOAD_ACTION
+        error=None
+        try:
+            if action=="downloadcancel" and game["partial"]:
+                current=manifests().get(key)
+                if not current or not current["partial"] or running(key):raise ValueError("Der Installationszustand hat sich geändert.")
+                subprocess.Popen([str(steam_path()/"steam.exe"),"+app_uninstall",key],creationflags=subprocess.CREATE_NO_WINDOW)
+                for _ in range(24):
+                    time.sleep(.5)
+                    if key not in manifests():break
+                else:raise ValueError("Steam hat den Abbruch noch nicht bestätigt.")
+            else:
+                result=subprocess.run([sys.executable,str(Path(__file__).with_name("steam_download.py")),action[8:],game["name"]],
+                    capture_output=True,timeout=45,creationflags=subprocess.CREATE_NO_WINDOW)
+                reply=json.loads(result.stdout)
+                if not reply.get("ok"):raise ValueError(reply.get("error","Steam konnte den Auftrag nicht ausführen."))
+            if action=="downloadcancel":
+                with LOCK:
+                    QUEUE[:]=[q for q in QUEUE if q["id"]!=key or q["action"]!="install"]
+                    write("queue.json",QUEUE)
+        except (ValueError,OSError,subprocess.TimeoutExpired) as exc:
+            error=str(exc) if type(exc) is ValueError else "Steam hat den Auftrag nicht bestätigt."
+        finally:
+            with LOCK:DOWNLOAD_ACTION={"id":key,"pending":False,"error":error}
+    threading.Thread(target=run,daemon=True).start()
+    return True,None
 
 def allowed(key):
     if not str(key).isdecimal() or int(key)>0xffffffff:return False
@@ -220,8 +270,8 @@ def queue_step(apps):
         for q in QUEUE:
             if q["action"]=="install" and q.get("drive") and q.get("sent") and not q.get("direct") and not q.get("error") and not apps.get(q["id"]):
                 q["sent"]=False;changed=True
-        if not PAUSED and QUEUE and not any(q.get("sent") for q in QUEUE):
-            q=QUEUE[0]
+        q=next((job for job in QUEUE if not job.get("held")),None)
+        if not PAUSED and q and not any(job.get("sent") for job in QUEUE):
             try:
                 if q["action"]=="install" and q.get("drive"):
                     install_to_drive(q["id"],q["drive"]);q["direct"]=True
@@ -308,7 +358,7 @@ class Handler(BaseHTTPRequestHandler):
                     shutil.copyfileobj(stream,self.wfile)
                 return
             if self.path=="/status" and not post:
-                with LOCK:status=dict(LAST,hostBuild=330,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
+                with LOCK:status=dict(LAST,hostBuild=331,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
                 return self.reply(200,status)
             if self.path=="/catalog-media" and not post:return self.reply(200,MEDIA.copy())
             if self.path.startswith("/trophies/") and not post:
@@ -343,9 +393,13 @@ class Handler(BaseHTTPRequestHandler):
                     path.mkdir(parents=True,exist_ok=True)
                 return self.reply(200,{"path":str(path)})
             if self.path.startswith("/foreground/") and not post:
-                from spiel_fenster import playing
+                from spiel_fenster import playing,launch_stage
                 key=self.path.rsplit("/",1)[1]
-                return self.reply(200,{"visible":playing(key),"running":running(key) if key.isdecimal() and len(key)<=10 else None})
+                visible=playing(key)
+                return self.reply(200,{"visible":visible,"stage":"" if visible else launch_stage(key),"running":running(key) if key.isdecimal() and len(key)<=10 else None})
+            if post and self.path=="/queue" and req.get("action") in ("downloadfirst","downloadpause","downloadcancel"):
+                ok,error=download_command(str(req.get("id","")),req["action"])
+                return self.reply(200 if ok else 409,{"ok":True,"error":error})
             with LOCK:
                 if self.path=="/ping" and not post:return self.reply(200,{"ok":True})
                 if self.path=="/profiles" and post:
