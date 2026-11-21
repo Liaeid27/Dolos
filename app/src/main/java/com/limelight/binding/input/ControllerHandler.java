@@ -225,9 +225,24 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         return range;
     }
 
+    private boolean streamReady;
+    public void streamStarted() {
+        streamReady=true;
+        for(int id:InputDevice.getDeviceIds()) onInputDeviceAdded(id);
+        for(int i=0;i<usbDeviceContexts.size();i++)sendControllerInputPacket(usbDeviceContexts.valueAt(i));
+    }
+
     @Override
     public void onInputDeviceAdded(int deviceId) {
-        // Nothing happening here yet
+        if(!streamReady||stopped)return;
+        InputDevice dev=InputDevice.getDevice(deviceId);
+        if(dev==null||dev.isVirtual()||(dev.getSources()&InputDevice.SOURCE_JOYSTICK)!=InputDevice.SOURCE_JOYSTICK)return;
+        InputDeviceContext context=inputDeviceContexts.get(deviceId);
+        if(context==null){
+            context=createInputDeviceContextForDevice(dev);
+            inputDeviceContexts.put(deviceId,context);
+        }
+        sendControllerInputPacket(context);
     }
 
     @Override
@@ -1217,6 +1232,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private void sendControllerInputPacket(GenericControllerContext originalContext) {
+        if(!streamReady||stopped)return;
         assignControllerNumberIfNeeded(originalContext);
 
         // Take the context's controller number and fuse all inputs with the same number

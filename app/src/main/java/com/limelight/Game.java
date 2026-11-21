@@ -229,6 +229,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             prefConfig.fps=Math.min(prefConfig.fps,30);prefConfig.bitrate=Math.min(prefConfig.bitrate,2500);
         }
         tombstonePrefs = Game.this.getSharedPreferences("DecoderTombstone", 0);
+        boolean recovery=ConsoleDock.isTV(this)&&tombstonePrefs.getInt("CrashCount",0)>0;
+        if(recovery){
+            prefConfig.width=Math.min(prefConfig.width,1280);prefConfig.height=Math.min(prefConfig.height,720);
+            prefConfig.fps=Math.min(prefConfig.fps,60);prefConfig.bitrate=Math.min(prefConfig.bitrate,8000);
+            prefConfig.enableHdr=false;prefConfig.videoFormat=PreferenceConfiguration.FormatOption.FORCE_H264;
+        }
 
         // Enter landscape unless we're on a square screen
         setPreferredOrientationForCurrentDisplay();
@@ -248,7 +254,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // Listen for non-touch events on the game surface
         streamView = findViewById(R.id.surfaceView);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) streamView.setTranslationX(-32768f);
+
         streamView.setOnGenericMotionListener(this);
         streamView.setOnKeyListener(this);
         streamView.setInputCallbacks(this);
@@ -428,13 +434,13 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // H.264 is always supported
         int supportedVideoFormats = MoonBridge.VIDEO_FORMAT_H264;
-        if (decoderRenderer.isHevcSupported()) {
+        if (!recovery && decoderRenderer.isHevcSupported()) {
             supportedVideoFormats |= MoonBridge.VIDEO_FORMAT_H265;
             if (willStreamHdr && decoderRenderer.isHevcMain10Hdr10Supported()) {
                 supportedVideoFormats |= MoonBridge.VIDEO_FORMAT_H265_MAIN10;
             }
         }
-        if (decoderRenderer.isAv1Supported()) {
+        if (!recovery && decoderRenderer.isAv1Supported()) {
             supportedVideoFormats |= MoonBridge.VIDEO_FORMAT_AV1_MAIN8;
             if (willStreamHdr && decoderRenderer.isAv1Main10Supported()) {
                 supportedVideoFormats |= MoonBridge.VIDEO_FORMAT_AV1_MAIN10;
@@ -1368,8 +1374,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
     private String screenKey="";
     private void setGamePictureVisible(boolean visible) {
-        // Keep the decoder surface alive while moving its video plane behind the launch screen.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) streamView.setTranslationX(visible ? 0f : -32768f);
+        // Leave the decoder surface in place during window transitions.
         launchCurtain.setVisibility(visible ? View.GONE : View.VISIBLE);
     }
     private void guardGameDisplay() {
@@ -1398,7 +1403,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }catch(Exception e){runOnUiThread(()->ConsoleDock.show(this,e.getMessage(),new String[]{"Zur Startseite"},i->returnToLibrary()));return;}
             boolean previous=false,wasRunning=false;int readySamples=0,closedSamples=0;long prepared=0;
             long waitingSince=android.os.SystemClock.elapsedRealtime();
-            final Runnable cover=()->{if(!stopCurtainMonitor&&!isFinishing())setGamePictureVisible(false);};
+            int misses=0; boolean revealed=false;
             while(!stopCurtainMonitor){
                 boolean visible=false;String stage="";
                 try{
@@ -1418,7 +1423,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         visible=ControlLink.request(host,"/screen/"+screenKey,new org.json.JSONObject().put("action","prepare"),pin,token).optBoolean("visible");
                     }
                 }catch(Exception ignored){}
-                readySamples=visible?readySamples+1:0;final boolean show=readySamples>=2;
+                readySamples=visible?readySamples+1:0;
+                misses=visible?0:misses+1;
+                if(readySamples>=2)revealed=true;
+                else if(misses>=2)revealed=false;
+                final boolean show=revealed;
                 if(show)waitingSince=android.os.SystemClock.elapsedRealtime();
                 final boolean delayed=!show&&android.os.SystemClock.elapsedRealtime()-waitingSince>22000;
                 final boolean gameRunning=wasRunning;final String launchStage=stage;
@@ -1426,10 +1435,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     if(stopCurtainMonitor||isFinishing())return;
                     if(delayed&&!launchStage.isEmpty())exit.setText(launchStage+"　 ·　 Zur Startseite");
                     else if(delayed)exit.setText(gameRunning?"Spiel läuft · Warte auf das Bild am Stream-Display　 ·　 Zur Startseite":"Warte auf das Spielfenster　 ·　 Zur Startseite");
-                    launchCurtain.removeCallbacks(cover);
                     boolean covered=launchCurtain.getVisibility()==View.VISIBLE;
                     setGamePictureVisible(show);
-                    if(show){if(changed||covered)streamView.requestFocus();launchCurtain.postDelayed(cover,3000);}
+                    if(show){if(changed||covered)streamView.requestFocus();}
                     else if(changed)exit.requestFocus();
                 });
                 previous=visible;
@@ -1481,7 +1489,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             if((flags&2)!=0){if(key==KeyEvent.KEYCODE_BUTTON_X)mapped=KeyEvent.KEYCODE_BUTTON_Y;else if(key==KeyEvent.KEYCODE_BUTTON_Y)mapped=KeyEvent.KEYCODE_BUTTON_X;}
             if(mapped!=key)event=new KeyEvent(event.getDownTime(),event.getEventTime(),event.getAction(),mapped,event.getRepeatCount(),event.getMetaState(),event.getDeviceId(),event.getScanCode(),event.getFlags(),event.getSource());
         }
-        boolean remoteBack=key==KeyEvent.KEYCODE_BACK && !event.isFromSource(android.view.InputDevice.SOURCE_GAMEPAD);
+        InputDevice inputDevice=event.getDevice();
+        boolean fromPad=inputDevice!=null&&((inputDevice.getSources()&InputDevice.SOURCE_GAMEPAD)==InputDevice.SOURCE_GAMEPAD ||
+                (inputDevice.getSources()&InputDevice.SOURCE_JOYSTICK)==InputDevice.SOURCE_JOYSTICK);
+        boolean remoteBack=key==KeyEvent.KEYCODE_BACK && !fromPad;
         boolean heldStart=false;
         int[] bindings={KeyEvent.KEYCODE_BUTTON_START,KeyEvent.KEYCODE_BUTTON_SELECT,KeyEvent.KEYCODE_BUTTON_THUMBR,KeyEvent.KEYCODE_BUTTON_THUMBL};
         if(connected && key==bindings[ConsoleHome.appearance(this).getInt("menuBinding",0)&3]) {
@@ -1492,7 +1503,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 return super.dispatchKeyEvent(event);
             }
         }
-        if (connected && (heldStart || remoteBack || key==KeyEvent.KEYCODE_MENU)) {
+        if (connected && (heldStart || remoteBack || (!fromPad && key==KeyEvent.KEYCODE_MENU))) {
             if (event.getAction()==KeyEvent.ACTION_UP) {
                 String[] options={"Fortsetzen","Lautstärke","Stream-Statistik","Stream trennen","Spiel beenden"};
                 ConsoleDock.show(this,options,index->{
@@ -2625,6 +2636,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     getSharedPreferences("dolos-history."+slot,MODE_PRIVATE).edit()
                         .putLong(steamKey.isEmpty()?appName:steamKey,System.currentTimeMillis()).apply();
                 }
+                controllerHandler.streamStarted();
                 guardGameDisplay();
                 connected = true;
                 connecting = false;

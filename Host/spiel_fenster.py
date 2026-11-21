@@ -89,7 +89,10 @@ def game_window(key,background=False):
         path=foreground_path(hwnd)
         return path and (path.is_relative_to(target[0]) if target[1] else path==target[0]) and not any(
             x in path.stem.casefold() for x in ("crashreport","launcher","unins","setup","redist"))
-    if foreground and matches(foreground):return wt.HWND(foreground)
+    u.GetAncestor.argtypes=[wt.HWND,wt.UINT];u.GetAncestor.restype=wt.HWND
+    if foreground and matches(foreground):
+        owner=u.GetAncestor(foreground,3)
+        return wt.HWND(owner if owner and matches(owner) else foreground)
     if not background:return None
     windows=[]
     callback=ctypes.WINFUNCTYPE(wt.BOOL,wt.HWND,wt.LPARAM)
@@ -123,7 +126,7 @@ def screen(key,prepare=False):
         u.GetAncestor.argtypes=[wt.HWND,wt.UINT];u.GetAncestor.restype=wt.HWND
         def game_pixel(x,y):
             window=u.WindowFromPoint(wt.POINT(x,y))
-            return window and u.GetAncestor(window,2)==handle.value
+            return window and (u.GetAncestor(window,2)==handle.value or u.GetAncestor(window,3)==handle.value and foreground_path(window)==foreground_path(handle))
         visible=fits and not u.IsIconic(handle) and all(
             game_pixel(m.left+int((m.right-m.left)*x),m.top+int((m.bottom-m.top)*y))
             for x,y in ((.5,.5),(.08,.08),(.92,.08),(.08,.92),(.92,.92)))

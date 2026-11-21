@@ -93,7 +93,7 @@ final class ControlLink {
     void run(String action,String key,String name,String drive){
         if(closed)return;
         if(action.equals("pair")){pair();return;}
-        boolean polling=action.equals("status");
+        boolean polling=action.equals("status")||action.equals("transfers");
         if(polling&&busy)return;
         String host=address(),pin=prefs().getString("cert",null),token=prefs().getString("token",null);
         if(pin==null||token==null){fail("PC-Verwaltung noch nicht gekoppelt.");return;}
@@ -111,7 +111,7 @@ final class ControlLink {
                 if(!polling && !action.equals("measure") && !action.equals("profileNames")){
                     request(host,"/queue",new JSONObject().put("action",action).put("id",key).put("name",name).put("drive",drive),pin,token);
                 }
-                JSONObject status=request(host,"/status",null,pin,token);status.put("paired",true);lastResponse=SystemClock.elapsedRealtime();
+                JSONObject status=request(host,action.equals("transfers")&&snapshot.optInt("hostBuild")>=334?"/status/downloads":"/status",null,pin,token);status.put("paired",true);lastResponse=SystemClock.elapsedRealtime();
                 String uuid=home.host.getIntent().getStringExtra(AppView.UUID_EXTRA);
                 if(uuid!=null){
                     home.host.getSharedPreferences("studio",0).edit().putString("lastUuid",uuid).putString("lastHost",host).apply();
@@ -168,7 +168,7 @@ final class ControlLink {
                 AppView.AppObject candidate=(AppView.AppObject)home.library.getItem(i);
                 if(alias.equals(candidate.toString())){home.actions.play(candidate);return;}
             }
-            ConsoleDock.show(home.host, "In Dolos-PC → Einrichtung den Spielstart aktualisieren und bei Bedarf einen Spielstandordner zuordnen.",new String[]{"Zurück"},i->{});
+            ConsoleDock.show(home.host,"Eigenen Spielstand einrichten",new String[]{"Ordner auswählen","Zurück"},i->{if(i==0)createSavePath(id);});
             return;
         }
         if(id.isEmpty()||id.length()>10){home.actions.play(game);return;}
@@ -177,6 +177,23 @@ final class ControlLink {
         io.execute(()->{try{
             JSONObject status=request(host,"/status",null,prefs().getString("cert",null),prefs().getString("token",null));
             JSONObject apps=status.optJSONObject("apps");JSONObject g=apps==null?null:apps.optJSONObject(id);
+            JSONObject active=status.optJSONObject("activeGame");
+            if(active!=null&&(!id.equals(active.optString("id"))||active.optInt("profile")!=profile)){
+                home.host.runOnUiThread(()->ConsoleDock.show(home.host,active.optString("name")+" beenden und "+home.displayName(game)+" starten?",new String[]{"Zurück","Spiel wechseln"},index->{
+                    if(index!=1)return;
+                    io.execute(()->{try{
+                        String pin=prefs().getString("cert",null),token=prefs().getString("token",null);
+                        request(host,"/end-active",active,pin,token);
+                        for(int i=0;i<48;i++){
+                            if(!request(host,"/foreground/"+active.getString("id"),null,pin,token).optBoolean("running",true)){
+                                home.host.runOnUiThread(()->{if(!closed&&home.profile==profile)play(game);});return;
+                            }
+                            Thread.sleep(400);
+                        }
+                        throw new IOException("Das vorige Spiel wartet noch auf das Beenden.");
+                    }catch(Exception e){home.host.runOnUiThread(()->fail(e.getMessage()));}});
+                }));return;
+            }
             if(apps==null)throw new IOException("PC liest die Spieleliste.");
             if(!direct && g!=null && "installed".equals(g.optString("state")) && (isolated||home.console.liveAppId==game.app.getAppId())){
                 if(home.console.liveRunning)throw new IOException("Aktive Sitzung im Kontrollzentrum beenden und erneut starten.");
@@ -188,14 +205,28 @@ final class ControlLink {
                 else {home.console.web.evaluateJavascript("selectInstallDrive(items.find(g=>g.steamId==="+JSONObject.quote(id)+"))",null);}});
         }catch(Exception e){home.host.runOnUiThread(()->{if(!closed){home.console.web.evaluateJavascript("manage('Verbindung')",null);fail(e instanceof IOException && e.getMessage()!=null?e.getMessage():"PC-Verwaltung nicht erreichbar.");}});}});
     }
-    private static boolean containsId(org.json.JSONArray ids,String id){for(int i=0;i<ids.length();i++)if(id.equals(ids.optString(i)))return true;return false;}
+    private static boolean containsId(org.json.JSONArray ids,String id){if(ids==null)return false;for(int i=0;i<ids.length();i++)if(id.equals(ids.optString(i)))return true;return false;}
     void createSavePath(String id){
         int slot=home.profile;
         if(slot==0){ConsoleDock.show(home.host,"Das Standardprofil nutzt den vorhandenen Spielstand.",new String[]{"Zurück"},i->{});return;}
         String host=address();
-        io.execute(()->{try{String path=request(host,"/profile-folder",new JSONObject().put("id",id).put("slot",slot),prefs().getString("cert",null),prefs().getString("token",null)).getString("path");
-            home.host.runOnUiThread(()->ConsoleDock.show(home.host,path,new String[]{"Fertig"},i->{}));
+        if(id.isEmpty())return;
+        io.execute(()->{try{
+            String pin=prefs().getString("cert",null),token=prefs().getString("token",null);
+            JSONObject body=new JSONObject().put("id",id).put("slot",slot);
+            if(containsId(snapshot.optJSONArray("directProfiles"),id)){finishSaveSetup(host,body);return;}
+            org.json.JSONArray paths=request(host,"/save-candidates",body,pin,token).getJSONArray("paths");
+            if(paths.length()==0)throw new IOException("Kein eigener lokaler Speicherordner erkannt. Das Spiel im Standardprofil einmal speichern.");
+            String[] labels=new String[paths.length()+1];for(int i=0;i<paths.length();i++)labels[i]=paths.getString(i);
+            labels[paths.length()]="Zurück";
+            home.host.runOnUiThread(()->ConsoleDock.show(home.host,"Spielstandordner für "+home.profileName(slot)+" auswählen",labels,i->{
+                if(i<paths.length()&&home.profile==slot)io.execute(()->{try{finishSaveSetup(host,body.put("path",labels[i]));}catch(Exception e){home.host.runOnUiThread(()->fail(e.getMessage()));}});
+            }));
         }catch(Exception e){home.host.runOnUiThread(()->fail(e.getMessage()));}});
+    }
+    private void finishSaveSetup(String host,JSONObject body)throws Exception{
+        request(host,"/profile-folder",body,prefs().getString("cert",null),prefs().getString("token",null));
+        home.host.runOnUiThread(()->{run("status","","");ConsoleDock.show(home.host,"Eigener Spielstand eingerichtet",new String[]{"Fertig"},i->{});});
     }
     private String lastDisplayedProfile="";
     private boolean namesChanged(JSONObject ignored){

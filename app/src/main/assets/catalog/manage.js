@@ -4,7 +4,7 @@ let trophyData=null;
 function trophyResult(key,data){if(page==="manage"&&managePage==="Trophäen"&&product?.steamId===key){trophyData=data;lastRows="";drawManage()}}
 function manage(title){
  managePage=title;screen("manage");background(null);$("#manage").hidden=false;$("#manage h1").textContent=title;lastRows="";drawManage();
- if(title!=="Einstellungen" && title!=="Trophäen")native("status");
+ if(title!=="Einstellungen" && title!=="Trophäen")native(title==="Downloads"?"transfers":"status");
 }
 function controlState(data){
  if(data.measurement)measurement=data.measurement;
@@ -79,12 +79,12 @@ function drawManage(){
    }
    if(!list.length&&!extra.length)info("Keine aktiven Downloads","Installationen aus dem Store erscheinen hier.");
    for(const job of [...list,...extra]){
-    const g=apps[job.id]||{},s=job.held?"Angehalten":({paused:"Von Steam pausiert",staging:"Dateien werden vorbereitet",downloading:"Wird heruntergeladen",waiting:"Wartet auf Steam"})[g.state]||(job.error||(!job.sent?"In Warteschlange":job.direct?"Installationsauftrag an Steam gesendet":job.confirmed?"Installation bestätigt · Steam startet den Download":"Installationsdialog wird geprüft"));
-    const row=info(job.name,s+(g.total>0&&g.state!=="installed"?" · "+bytes(g.done)+" von "+bytes(g.total):""));
+    const g=apps[job.id]||{},s=job.held?"Angehalten":g.phase||({paused:"Von Steam pausiert",staging:"Dateien werden vorbereitet",downloading:"Wird heruntergeladen",waiting:"Wartet auf Steam"})[g.state]||(job.error||(!job.sent?"In Warteschlange":job.direct?"Installationsauftrag an Steam gesendet":job.confirmed?"Installation bestätigt · Steam startet den Download":"Installationsdialog wird geprüft"));
+    const row=info(job.name,s+(g.total>0&&g.state!=="installed"?" · "+Math.min(100,Math.floor(100*g.done/g.total))+" % · "+bytes(g.done)+" von "+bytes(g.total):""));
     row.dataset.key="job"+job.id;
     if((g.state&&g.state!=="installed"||ids.has(job.id)&&!job.sent&&job.action==="install")&&controlData.hostBuild>=331){
-     act("Jetzt herunterladen",()=>native("downloadfirst",job.id),row,"first"+job.id);
-     act("Anhalten",()=>native("downloadpause",job.id),row,"hold"+job.id);
+     if(!["downloading","staging"].includes(g.state))act(g.state==="paused"?"Fortsetzen":"Jetzt herunterladen",()=>native("downloadfirst",job.id),row,"first"+job.id);
+     if(g.state!=="paused"&&!job.held)act("Anhalten",()=>native("downloadpause",job.id),row,"hold"+job.id);
      act("Abbrechen",()=>confirmTransfer(job.id,job.name),row,"stop"+job.id);
     }
     if(g.total>0&&g.state!=="installed"){const meter=document.createElement("progress");meter.max=g.total;meter.value=g.done;row.append(meter)}
@@ -134,7 +134,7 @@ function confirmTransfer(id,name){
  button(box,"Download abbrechen",()=>{closeOptions();native("downloadcancel",id)});
  $("#gameOptions").hidden=false;box.querySelector("button").focus()
 }
-setInterval(()=>{if(!document.hidden&&page==="manage"&&!["Trophäen","Einstellungen"].includes(managePage))native("status")},5000);
+setInterval(()=>{if(!document.hidden&&page==="manage"&&!["Trophäen","Einstellungen"].includes(managePage))native(managePage==="Downloads"?"transfers":"status")},5000);
 
 let saveScope="";
 function renderSaveInfo(){

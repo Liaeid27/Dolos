@@ -211,6 +211,26 @@ def download_command(key,action):
     threading.Thread(target=run,daemon=True).start()
     return True,None
 
+def save_candidates(key):
+    from steam_aktion import validate_folder
+    if key in BUILTIN_PROFILES or not key.isascii() or not key.isdecimal():return []
+    game=LAST.get("apps",{}).get(key,{})
+    if game.get("state")!="installed":return []
+    from spiel_fenster import targets_now
+    target=targets_now().get(key)
+    names={game.get("name",""),target[0].name if target else ""}
+    roots=[Path.home()/"Documents",Path.home()/"Documents/My Games",Path.home()/"Saved Games",Path(os.environ["LOCALAPPDATA"]),Path(os.environ["APPDATA"]),Path.home()/"AppData/LocalLow"]
+    result=set()
+    for root in roots:
+        for name in names:
+            if not name or Path(name).name!=name or name in (".",".."):continue
+            for leaf in ("Savegames","Saves","Saved/SaveGames","SaveData","Save"):
+                p=root/name/leaf
+                if not p.is_dir() or p.resolve()!=p.absolute():continue
+                try:result.add(validate_folder(p))
+                except ValueError:continue
+    return sorted(result)
+
 def allowed(key):
     if not str(key).isdecimal() or int(key)>0xffffffff:return False
     from importieren import collect
@@ -283,6 +303,8 @@ def queue_step(apps):
             changed=True
         if changed:write("queue.json",QUEUE)
 
+TRANSFER_VIEW_UNTIL=0
+
 def worker():
     global LAST
     seen={}
@@ -290,7 +312,11 @@ def worker():
         try:
             try:restore_idle(seen)
             except (OSError,ValueError,KeyError):pass
-            apps=manifests();queue_step(apps)
+            apps=manifests()
+            if time.monotonic()<TRANSFER_VIEW_UNTIL:
+                from steam_progress import update
+                update(steam_path(),apps)
+            queue_step(apps)
             pending=next((q.copy() for q in QUEUE if q.get("sent") and not q.get("direct") and apps.get(q["id"],{}).get("state") not in ("downloading","staging")),None)
             prompt=steam_dialog(pending["name"],drive=pending.get("drive")) if pending else {}
             if pending and prompt:
@@ -328,7 +354,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):self.handle_api(False)
     def do_POST(self):self.handle_api(True)
     def handle_api(self,post):
-        global PAUSED,PENDING_OFF
+        global PAUSED,PENDING_OFF,TRANSFER_VIEW_UNTIL
         try:
             length=int(self.headers.get("Content-Length",0))
             if length>1024 or length<0:return self.reply(413,{})
@@ -357,8 +383,12 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_header("Content-Length",str(release["size"]));self.end_headers()
                     shutil.copyfileobj(stream,self.wfile)
                 return
-            if self.path=="/status" and not post:
-                with LOCK:status=dict(LAST,hostBuild=332,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
+            if self.path in ("/status","/status/downloads") and not post:
+                if self.path=="/status/downloads":TRANSFER_VIEW_UNTIL=time.monotonic()+12
+                with LOCK:status=dict(LAST,hostBuild=334,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
+                last=read("last-launch.json",{})
+                if last.get("id") and running(last["id"]):
+                    status["activeGame"]={"id":last["id"],"request":last.get("request"),"profile":last.get("profile",0),"name":status.get("apps",{}).get(last["id"],{}).get("name","Spiel")}
                 return self.reply(200,status)
             if self.path=="/catalog-media" and not post:return self.reply(200,MEDIA.copy())
             if self.path.startswith("/trophies/") and not post:
@@ -382,9 +412,30 @@ class Handler(BaseHTTPRequestHandler):
                 if req.get("action")=="close":return self.reply(200,{"accepted":close_game(game)})
                 if req.get("action")=="prepare":return self.reply(200,{"visible":screen(game,True)})
                 return self.reply(400,{})
+            if self.path=="/end-active" and post:
+                from spiel_fenster import close_game
+                with LOCK:
+                    last=read("last-launch.json",{})
+                    if not last or last.get("id")!=req.get("id") or last.get("request")!=req.get("request"):
+                        return self.reply(409,{"error":"Die aktive Spielsitzung hat sich geändert."})
+                    if running(last["id"]) and not close_game(last["id"]):return self.reply(409,{"error":"Das laufende Spiel kann gerade nicht geschlossen werden."})
+                    last["ending"]=True;write("last-launch.json",last)
+                    return self.reply(200,{"ok":True})
+            if self.path=="/save-candidates" and post:
+                key=str(req.get("id",""))
+                return self.reply(200,{"paths":[str(p) for p in save_candidates(key)]})
             if self.path=="/profile-folder" and post:
                 key=str(req.get("id",""));slot=req.get("slot")
-                if type(slot)!=int or slot not in (1,2,3) or key not in (BUILTIN_PROFILES|set(folders())):return self.reply(409,{"error":"Diesem Spiel in Dolos-PC unter Einrichtung einen lokalen Speicherordner zuordnen."})
+                if type(slot)!=int or slot not in (1,2,3):return self.reply(400,{})
+                chosen=req.get("path")
+                if chosen:
+                    with LOCK:
+                        if running(key) or chosen not in {str(p) for p in save_candidates(key)}:return self.reply(409,{"error":"Speicherordner nicht verfügbar oder Spiel läuft."})
+                        mapping=folders()
+                        if key in mapping and mapping[key]!=chosen or any(Path(chosen).is_relative_to(Path(v)) or Path(v).is_relative_to(Path(chosen)) for k,v in mapping.items() if k!=key):
+                            return self.reply(409,{"error":"Speicherordner ist bereits zugeordnet."})
+                        mapping[key]=chosen;write("save-folders.json",mapping)
+                if key not in (BUILTIN_PROFILES|set(folders())):return self.reply(409,{"error":"Diesem Spiel in Dolos-PC unter Einrichtung einen lokalen Speicherordner zuordnen."})
                 path=profile_path(key,slot)
                 if key in folders() and (DATA/("active-"+key+".json")).exists():return self.reply(409,{"error":"Profilwechsel erst nach Spielende möglich."})
                 from steam_aktion import save_lock
@@ -415,7 +466,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply(409,{"error":"Spiel noch nicht bereit."})
                     last=read("last-launch.json",{})
                     if last.get("request")==nonce and last.get("id")==key and last.get("profile")==profile:return self.reply(200,{"ok":True})
-                    if last and (running(last["id"]) or time.time()-last["time"]<12):
+                    if last and (running(last["id"]) or (not last.get("ending") and time.time()-last["time"]<12)):
                         if last["id"]==key and last["profile"]==profile:return self.reply(200,{"ok":True})
                         return self.reply(409,{"error":"Das vorige Spiel zuerst beenden."})
                     if running(key):return self.reply(409,{"error":"Dieses Spiel ist bereits auf dem PC geöffnet."})

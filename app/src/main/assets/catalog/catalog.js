@@ -115,7 +115,7 @@ function showHome(){
    if(g.id)art(b,g);else{b.classList.add("bag");b.innerHTML=svg("bag")}
    b.dataset.id=g.id;b.oncontextmenu=e=>{e.preventDefault();if(g.id)openGameOptions(items.find(i=>i.id===g.id)||g)};b.onpointerenter=e=>{if(e.pointerType==="mouse"&&page==="home"&&$("#gameOptions").hidden&&$("#center").hidden)b.focus({preventScroll:true})};b.onfocus=()=>selectGame(g,b);b.onclick=()=>{selectGame(g,b);playCurrent()};rail.append(b);if(g.id===selection)focus=b
  }
- focus=focus||rail.firstChild;focus.focus();if(!focus.classList.contains("current"))selectGame(current(),focus)
+ focus=focus||rail.firstChild;focus.focus({preventScroll:true});if(focus!==rail.firstChild)focus.scrollIntoView({block:"nearest",inline:"nearest"});else{rail.scrollLeft=0;rail.scrollTop=0;}if(!focus.classList.contains("current"))selectGame(current(),focus)
 }
 function download(g){return ["cached","owned","family"].includes(g.state)}
 function transferLabel(g){const x=g.transfer;if(!x)return "";return x.total?Math.min(99,Math.floor(100*x.done/x.total))+" %":"Wartet"}
@@ -230,7 +230,9 @@ document.addEventListener("keydown",e=>{
  if(page==="home"&&active.parentElement===$("#rail")&&$("#gameOptions").hidden&&$("#center").hidden){
     const vertical=document.body.classList.contains("enhanced")&&innerWidth>=innerHeight;
     const step=vertical?dir[1]:dir[0];
-    if(step){e.preventDefault();const next=step>0?active.nextElementSibling:active.previousElementSibling;if(next){e.preventDefault();next.focus({preventScroll:true});next.scrollIntoView({block:"nearest",inline:"nearest"});}return}
+    if(step){e.preventDefault();const next=step>0?active.nextElementSibling:active.previousElementSibling;if(next){e.preventDefault();next.focus({preventScroll:true});const rail=next.parentElement,r=rail.getBoundingClientRect(),n=next.getBoundingClientRect(),margin=10;
+       const delta=vertical?(n.bottom>r.bottom-margin?n.bottom-r.bottom+margin:Math.min(0,n.top-r.top-margin)):(n.right>r.right-margin?n.right-r.right+margin:Math.min(0,n.left-r.left-margin));
+       if(delta)rail.scrollBy({left:vertical?0:delta,top:vertical?delta:0,behavior:"smooth"});}return}
  }
  if(page==="store"&&active.classList.contains("card")&&$("#gameOptions").hidden&&$("#orderPanel").hidden){
    const grid=active.parentElement,columns=getComputedStyle(grid).gridTemplateColumns.split(" ").length;

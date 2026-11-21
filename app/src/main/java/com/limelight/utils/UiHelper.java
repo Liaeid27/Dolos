@@ -176,6 +176,11 @@ public class UiHelper {
         // display the crash dialog every time the app is started until
         // they stream again
         if (crashCount != 0 && crashCount != lastNotifiedCrashCount) {
+            if ((activity.getResources().getConfiguration().uiMode & 15)==android.content.res.Configuration.UI_MODE_TYPE_TELEVISION){
+                prefs.edit().putInt("LastNotifiedCrashCount",crashCount).apply();
+                android.widget.Toast.makeText(activity,"Videodekoder neu gestartet. Der nächste Stream verwendet H.264 mit höchstens 720p.",android.widget.Toast.LENGTH_LONG).show();
+                return;
+            }
             if (crashCount % 3 == 0) {
                 // At 3 consecutive crashes, we'll forcefully reset their settings
                 PreferenceConfiguration.resetStreamingSettings(activity);
