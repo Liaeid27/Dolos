@@ -81,6 +81,7 @@ function openGameOptions(g){
  function add(text,fn){button(box,text,()=>{closeOptions();fn()})}
  add("Spielseite öffnen",()=>detail(g));add(download(g)?"Installieren":"Spielen",()=>playGame(g));
  add(g.pinned?"Aus Spielen entfernen":"Zu Spielen hinzufügen",()=>{g.pinned=!g.pinned;native(g.pinned?"pin":"unpin",g.id);if(page==="home")showHome()});
+ if(g.steamId)add("Speicherpfad für dieses Profil",()=>native("savepath",g.id));
  if(g.removable)add("Deinstallieren",()=>native("remove",g.id));
  add("Schließen",()=>{});$("#gameOptions").hidden=false;box.querySelector("button").focus()
 }

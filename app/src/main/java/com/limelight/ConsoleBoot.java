@@ -27,6 +27,19 @@ final class ConsoleBoot {
         new Thread(()->{
             android.graphics.Bitmap bitmap=null;
             try{
+                org.json.JSONObject atlas=new org.json.JSONObject(activity.getSharedPreferences("dolos-control-"+uuid,0).getString("atlas","{}"));
+                org.json.JSONArray ids=atlas.optJSONArray("ids");
+                for(int i=0;ids!=null&&i<ids.length();i++)if(id.equals(ids.optString(i))){
+                    java.io.File file=new java.io.File(new java.io.File(activity.getCacheDir(),"pc-art-"+uuid.replaceAll("[^a-zA-Z0-9-]","")),(i/64)+"_atlas_"+atlas.optString("rev")+".jpg");
+                    if(file.isFile()){
+                        android.graphics.BitmapRegionDecoder decoder=android.graphics.BitmapRegionDecoder.newInstance(file.toString(),false);
+                        int x=i%8*144,y=i%64/8*216;
+                        try{android.graphics.Bitmap thumb=decoder.decodeRegion(new android.graphics.Rect(x,y,x+144,y+216),null);
+                            activity.runOnUiThread(()->showGameArt(activity,layer,thumb));
+                        }finally{decoder.recycle();}
+                    }
+                    break;
+                }
                 java.io.File box=new java.io.File(new java.io.File(new java.io.File(activity.getCacheDir(),"boxart"),uuid),intent.getIntExtra(Game.EXTRA_APP_ID,0)+".png");
                 if(box.isFile())bitmap=android.graphics.BitmapFactory.decodeFile(box.toString());
                 org.json.JSONObject all=new org.json.JSONObject(activity.getSharedPreferences("dolos-control-"+uuid,0).getString("artwork","{}"));
@@ -42,13 +55,17 @@ final class ConsoleBoot {
                 try(java.io.InputStream in=RemoteMedia.fetch(activity,"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/"+id+"/header.jpg",false).getData()){bitmap=android.graphics.BitmapFactory.decodeStream(in);}catch(Exception ignored){}
             }
             final android.graphics.Bitmap image=bitmap;if(image==null)return;
-            activity.runOnUiThread(()->{
-                if(activity.isFinishing()||activity.isDestroyed())return;
-                ImageView backdrop=new ImageView(activity);backdrop.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                backdrop.setImageBitmap(image);backdrop.setAlpha(0);backdrop.setScaleX(1.05f);backdrop.setScaleY(1.05f);
-                layer.addView(backdrop,1,new FrameLayout.LayoutParams(-1,-1));backdrop.animate().alpha(.60f).scaleX(1f).scaleY(1f).setDuration(1200);
-            });
+            activity.runOnUiThread(()->showGameArt(activity,layer,image));
         },"Dolos-Launch-Art").start();
+    }
+    private static void showGameArt(Game activity,FrameLayout layer,android.graphics.Bitmap image){
+        if(image==null||activity.isFinishing()||activity.isDestroyed())return;
+        ImageView backdrop=layer.findViewWithTag("gameArt");
+        if(backdrop==null){
+            backdrop=new ImageView(activity);backdrop.setTag("gameArt");backdrop.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            layer.addView(backdrop,1,new FrameLayout.LayoutParams(-1,-1));backdrop.setAlpha(0f);
+        }
+        backdrop.setImageBitmap(image);backdrop.animate().alpha(.70f).setDuration(220);
     }
     static void remove(FrameLayout layer) {
         if(layer.getParent() instanceof ViewGroup) ((ViewGroup)layer.getParent()).removeView(layer);
@@ -101,20 +118,24 @@ final class ConsoleBoot {
             }
         }
         a.addContentView(layer,new FrameLayout.LayoutParams(-1,-1));
+        ImageView plate=new ImageView(a);
+        plate.setBackgroundColor(android.graphics.Color.BLACK);
+        plate.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        if(!off){plate.setImageResource(R.drawable.dolos_transition);plate.setAlpha(0f);layer.addView(plate,new FrameLayout.LayoutParams(-1,-1));}
         boolean[] complete={false};
         Runnable finish=()->{
             if(complete[0])return;
             complete[0]=true;
             for(View child:obscured)child.setVisibility(View.VISIBLE);
-            if(!BuildConfig.REMOTE_BUILD&&!off&&a instanceof PcView&&((PcView)a).openingLibraryAfterBoot()){
-                video.stopPlayback();video.setVisibility(View.GONE);
-                ImageView mark=new ImageView(a);mark.setImageResource(R.drawable.dolos_transition);mark.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                layer.addView(mark,new FrameLayout.LayoutParams(-1,-1));done.run();layer.postDelayed(()->remove(layer),750);return;
-            }
-            if(selected==null&&!off&&!a.isFinishing()&&!a.isDestroyed()){
-                ImageView still=new ImageView(a);still.setScaleType(ImageView.ScaleType.FIT_CENTER);still.setImageResource(R.drawable.dolos_transition);
-                layer.addView(still,new FrameLayout.LayoutParams(-1,-1));video.setVisibility(View.GONE);video.stopPlayback();
-                layer.animate().alpha(0f).setDuration(360).withEndAction(()->{remove(layer);if(!a.isFinishing()&&!a.isDestroyed())done.run();});
+            if(!off&&!a.isFinishing()&&!a.isDestroyed()){
+                plate.animate().cancel();plate.setAlpha(1f);
+                // Submit the opaque handoff frame before the video Surface is destroyed.
+                plate.postOnAnimation(()->plate.postOnAnimation(()->{
+                    video.setVisibility(View.GONE);video.stopPlayback();
+                    boolean launching=a instanceof PcView&&((PcView)a).openingLibraryAfterBoot();
+                    if(launching){done.run();layer.postDelayed(()->remove(layer),1600);}
+                    else layer.animate().alpha(0f).setDuration(360).withEndAction(()->{remove(layer);if(!a.isFinishing()&&!a.isDestroyed())done.run();});
+                }));
                 return;
             }
             video.stopPlayback();remove(layer);
@@ -137,6 +158,15 @@ final class ConsoleBoot {
             if(complete[0])return;layer.removeCallbacks(finish);layer.postDelayed(finish,Math.max(2000,mp.getDuration()+1600));
             boolean enabled=com.limelight.preferences.ProfileSettings.group(a,"console").getBoolean("sound",true);
             mp.setVolume(enabled?1:0,enabled?1:0);video.start();
+            if(!off)layer.post(new Runnable(){
+                public void run(){
+                    if(complete[0]||!layer.isAttachedToWindow())return;
+                    int left=video.getDuration()-video.getCurrentPosition();
+                    int blend=selected==null?1400:480;
+                    if(left>0 && left<=blend){plate.animate().alpha(1f).setDuration(Math.min(680,left));return;}
+                    layer.postDelayed(this,100);
+                }
+            });
         });
         int id=useMain[0]?(off?R.raw.dolos_off:R.raw.dolos_on):fallback;
         video.setVideoURI(selected!=null?selected:android.net.Uri.parse(resource+id));

@@ -117,6 +117,7 @@ final class ControlLink {
                     home.host.getSharedPreferences("studio",0).edit().putString("lastUuid",uuid).putString("lastHost",host).apply();
                     JSONObject art=status.optJSONObject("pcArtwork");
                     if(art!=null)prefs().edit().putString("artwork",art.toString()).apply();
+                    JSONObject atlas=status.optJSONObject("coverAtlas");if(atlas!=null)prefs().edit().putString("atlas",atlas.toString()).apply();
                 }
                 int available=status.optInt("mediaCount",0);
                 if(!BuildConfig.REMOTE_BUILD && available>0 && (mediaCount<0 || available-mediaCount>=12 || status.optJSONArray("catalog")!=null && available==status.optJSONArray("catalog").length()&&available!=mediaCount)){
@@ -158,15 +159,16 @@ final class ControlLink {
         }
         String id=Catalog.steamId(game.toString());
         final int profile=home.profile;
-        final boolean isolated=profile!=0&&home.console.liveAppId!=0&&snapshot.optJSONArray("profileLaunch")!=null&&snapshot.optJSONArray("profileLaunch").length()>0&&
-            java.util.Arrays.asList("105600","294100","1874880").contains(id);
+        final boolean direct=home.console.virtualAppId!=0&&snapshot.has("directProfiles")&&id.matches("[0-9]{1,10}");
+        org.json.JSONArray supported=snapshot.optJSONArray(direct?"directProfiles":"profileLaunch");
+        final boolean isolated=profile!=0&&(direct||home.console.liveAppId!=0)&&supported!=null&&containsId(supported,id);
         if(profile!=0&&!isolated){
             String alias=home.prefix(home.profile)+home.displayName(game);
             for(int i=0;home.library!=null&&i<home.library.getCount();i++){
                 AppView.AppObject candidate=(AppView.AppObject)home.library.getItem(i);
                 if(alias.equals(candidate.toString())){home.actions.play(candidate);return;}
             }
-            ConsoleDock.show(home.host, "Für dieses Spiel fehlt ein eigener Speicherpfad",new String[]{"Zurück"},i->{});
+            ConsoleDock.show(home.host, "In Dolos-PC → Einrichtung den Spielstart aktualisieren und bei Bedarf einen Spielstandordner zuordnen.",new String[]{"Zurück"},i->{});
             return;
         }
         if(id.isEmpty()||id.length()>10){home.actions.play(game);return;}
@@ -176,15 +178,24 @@ final class ControlLink {
             JSONObject status=request(host,"/status",null,prefs().getString("cert",null),prefs().getString("token",null));
             JSONObject apps=status.optJSONObject("apps");JSONObject g=apps==null?null:apps.optJSONObject(id);
             if(apps==null)throw new IOException("PC liest die Spieleliste.");
-            if(g!=null && "installed".equals(g.optString("state")) && (isolated||home.console.liveAppId==game.app.getAppId())){
+            if(!direct && g!=null && "installed".equals(g.optString("state")) && (isolated||home.console.liveAppId==game.app.getAppId())){
                 if(home.console.liveRunning)throw new IOException("Aktive Sitzung im Kontrollzentrum beenden und erneut starten.");
                 request(host,"/select",new JSONObject().put("id",id).put("profile",profile),prefs().getString("cert",null),prefs().getString("token",null));
             }
             home.host.runOnUiThread(()->{if(closed)return;
                 if(profile!=home.profile)return;
-                if(g!=null&&"installed".equals(g.optString("state")))home.actions.play(isolated?new AppView.AppObject(new com.limelight.nvstream.http.NvApp(game.toString(),home.console.liveAppId,false)):game);
+                if(g!=null&&"installed".equals(g.optString("state")))home.actions.play(direct||isolated?new AppView.AppObject(new com.limelight.nvstream.http.NvApp(game.toString(),direct?home.console.virtualAppId:home.console.liveAppId,false)):game);
                 else {home.console.web.evaluateJavascript("selectInstallDrive(items.find(g=>g.steamId==="+JSONObject.quote(id)+"))",null);}});
         }catch(Exception e){home.host.runOnUiThread(()->{if(!closed){home.console.web.evaluateJavascript("manage('Verbindung')",null);fail(e instanceof IOException && e.getMessage()!=null?e.getMessage():"PC-Verwaltung nicht erreichbar.");}});}});
+    }
+    private static boolean containsId(org.json.JSONArray ids,String id){for(int i=0;i<ids.length();i++)if(id.equals(ids.optString(i)))return true;return false;}
+    void createSavePath(String id){
+        int slot=home.profile;
+        if(slot==0){ConsoleDock.show(home.host,"Das Standardprofil nutzt den vorhandenen Spielstand.",new String[]{"Zurück"},i->{});return;}
+        String host=address();
+        io.execute(()->{try{String path=request(host,"/profile-folder",new JSONObject().put("id",id).put("slot",slot),prefs().getString("cert",null),prefs().getString("token",null)).getString("path");
+            home.host.runOnUiThread(()->ConsoleDock.show(home.host,path,new String[]{"Fertig"},i->{}));
+        }catch(Exception e){home.host.runOnUiThread(()->fail(e.getMessage()));}});
     }
     private String lastDisplayedProfile="";
     private boolean namesChanged(JSONObject ignored){

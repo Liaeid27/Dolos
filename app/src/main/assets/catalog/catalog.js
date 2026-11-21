@@ -14,6 +14,12 @@ function tone(ok=false){
  context=context||new AudioContext();if(context.state==="suspended")context.resume();
  const t=context.currentTime,o=context.createOscillator(),g=context.createGain();o.type="sine";o.frequency.setValueAtTime(ok?587:783,t);o.frequency.exponentialRampToValueAtTime(ok?880:622,t+.095);g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.037,t+.009);g.gain.exponentialRampToValueAtTime(.0001,t+.16);o.connect(g);g.connect(context.destination);o.start();o.stop(t+.18)}catch(e){}
 }
+function systemBar(label,bars,pad){
+ const wifi=$("#wifiStatus"),bt=$("#btStatus");wifi.title=label;wifi.setAttribute("aria-label",label+" · Netzwerkeinstellungen");
+ wifi.querySelectorAll("path,circle").forEach((path,i)=>path.style.opacity=bars<0?.45:bars>=4-i?1:.23);
+ bt.title=pad?"Bluetooth · Controller erkannt":"Bluetooth-Geräte";bt.setAttribute("aria-label",bt.title);bt.style.opacity=pad?"1":".66";
+ if(label==="LAN"){wifi.dataset.lan="1";wifi.style.opacity="1"}else delete wifi.dataset.lan;
+}
 function refreshClock(){const date=new Date();$("time").textContent=date.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}
 refreshClock();setInterval(refreshClock,15000);
 let sortFrame=0;
@@ -112,14 +118,26 @@ function showHome(){
  focus=focus||rail.firstChild;focus.focus();if(!focus.classList.contains("current"))selectGame(current(),focus)
 }
 function download(g){return ["cached","owned","family"].includes(g.state)}
+function transferLabel(g){const x=g.transfer;if(!x)return "";return x.total?Math.min(99,Math.floor(100*x.done/x.total))+" %":"Wartet"}
+function refreshStoreCards(){
+ const grid=$(".grid");if(!grid)return;
+ const byId=new Map(items.map(g=>[g.id,g]));
+ for(const card of grid.children){const g=byId.get(card.dataset.id);if(!g)continue;
+   card.hidden=filter===1&&g.state!=="installed"||filter===2&&!download(g);
+   const label=card.querySelector("strong");if(label){const text=g.name+(g.transfer?" · "+transferLabel(g):"");if(text!==label.textContent)label.textContent=text}
+ }
+}
 function playGame(g){
+ if(g.transfer){manage("Downloads");return}
  if(download(g)){selectInstallDrive(g)}else native("play",g.id)
 }
 function selectInstallDrive(g){
  stopMedia();optionFocus=document.activeElement;
  const box=$(".gameSheet");box.replaceChildren();const h=document.createElement("h2");h.textContent="Installationsort";box.append(h);
  const disks=(controlData.disks||[]).filter(d=>d.drive);
- for(const disk of disks)button(box,disk.drive+"　"+bytes(disk.free)+" frei",()=>{closeOptions();manage("Downloads");native("install",g.id+"?drive="+encodeURIComponent(disk.drive))});
+ const required=(controlData.catalog||[]).find(row=>row.id===g.steamId)?.required||0;
+ for(const disk of disks){const full=required>disk.free;const b=button(box,disk.drive+"　"+bytes(disk.free)+" frei"+(full?" · Zu wenig Speicher":""),()=>{closeOptions();manage("Downloads");native("install",g.id+"?drive="+encodeURIComponent(disk.drive))});b.disabled=full}
+ if(required){const p=document.createElement("p");p.textContent="Benötigt mindestens "+bytes(required);box.append(p)}
  if(!disks.length){const note=document.createElement("p");note.textContent="Dolos-PC aktualisieren und die PC-Verbindung prüfen.";box.append(note);button(box,"Verbindung prüfen",()=>{closeOptions();manage("Verbindung")})}
  button(box,"Abbrechen",closeOptions);$("#gameOptions").hidden=false;box.querySelector("button").focus()
 }
@@ -145,15 +163,21 @@ function toggleOrder(open,focus=true){
  const b=button(panel,missingLast?"Ohne Cover: am Ende":"Ohne Cover: einsortiert",()=>{missingLast=!missingLast;persist()});b.setAttribute("aria-pressed",String(missingLast));panel.children[order]?.focus()
 }
 $("#order").onclick=()=>toggleOrder($("#orderPanel").hidden);
+function shoulder(key){
+ if(window.closeTvKeyboard?.())return;
+ if(!$("#cinema").hidden||!$("#gameOptions").hidden||!$("#center").hidden){back();return}
+ if(key==="home"){showHome();return}if(key==="store"){showStore();return}
+ if(page==="store"){filter=(filter+(key==="next"?1:-1)+filters.length)%filters.length;showStore()}else if(key==="next")showStore();else showHome();
+}
 function showStore(focusId){if(page!=="store")native("status");
  screen("store");background(null);const q=$("#search").value.trim().toLocaleLowerCase();
  const list=items.filter(g=>g.name.toLocaleLowerCase().includes(q)&&[true,g.state==="installed",download(g),["host","shortcut"].includes(g.state),g.pinned][filter]).sort(rankGames);
  document.querySelectorAll("#filters button").forEach((b,i)=>b.classList.toggle("active",i===filter));
  const grid=$(".grid");grid.replaceChildren();$("#empty").hidden=!!list.length;
  for(const g of list){const b=document.createElement("button");b.className="card";b.dataset.id=g.id;b.oncontextmenu=e=>{e.preventDefault();openGameOptions(g)};const cover=document.createElement("span");cover.className="art";art(cover,g);
- const name=document.createElement("strong");name.textContent=g.name;b.append(cover,name);b.onclick=()=>detail(g);grid.append(b)}
+ const name=document.createElement("strong");name.textContent=g.name+(g.transfer?" · "+transferLabel(g):"");b.append(cover,name);b.onclick=()=>detail(g);grid.append(b)}
  
- if(focusId!==false){const button=[...grid.children].find(b=>b.dataset.id===focusId)||grid.firstChild||$("#search");button.focus()}
+ if(focusId!==false){const button=[...grid.children].find(b=>b.dataset.id===focusId)||grid.firstChild||$("#search");button.focus({preventScroll:true});button.scrollIntoView({block:"nearest",inline:"nearest"})}
 }
 function detail(g){product=g;screen("product");background(g);scheduleTrailer(g,"product");loadProduct(g);renderSaveInfo();$(".productInfo h1").textContent=g.name;
  $(".productInfo p").textContent=({installed:"Auf dem PC installiert",cached:"Verfügbarkeit beim Installieren prüfen",owned:"In deiner Bibliothek",family:"Familienbibliothek",shortcut:"Eigenes Spiel",host:"Eigenes Spiel"})[g.state]||"";
@@ -200,7 +224,12 @@ document.addEventListener("keydown",e=>{
  if(page==="home"&&active.parentElement===$("#rail")&&$("#gameOptions").hidden&&$("#center").hidden){
     const vertical=document.body.classList.contains("enhanced")&&innerWidth>=innerHeight;
     const step=vertical?dir[1]:dir[0];
-    if(step){const next=step>0?active.nextElementSibling:active.previousElementSibling;if(next){e.preventDefault();next.focus();return}}
+    if(step){e.preventDefault();const next=step>0?active.nextElementSibling:active.previousElementSibling;if(next){e.preventDefault();next.focus({preventScroll:true});next.scrollIntoView({block:"nearest",inline:"nearest"});}return}
+ }
+ if(page==="store"&&active.classList.contains("card")&&$("#gameOptions").hidden&&$("#orderPanel").hidden){
+   const grid=active.parentElement,columns=getComputedStyle(grid).gridTemplateColumns.split(" ").length;
+   const idx=Array.prototype.indexOf.call(grid.children,active),target=grid.children[idx+dir[0]+dir[1]*columns];
+   if(target){e.preventDefault();target.focus({preventScroll:true});target.scrollIntoView({block:"nearest",inline:"nearest"});return}
  }
  const box=active.getBoundingClientRect();let best,score=Infinity;
  const scope=!$("#cinema").hidden?$("#cinema"):!$("#gameOptions").hidden?$("#gameOptions"):!$("#orderPanel").hidden?$("#orderPanel"):$("#center").hidden?document:$("#center");

@@ -122,6 +122,7 @@
         <activity android:name=".SetupGuide" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity
             android:name=".AppView"
+            android:theme="@style/DolosLibraryTheme"
             android:resizeableActivity="true"
             android:enableOnBackInvokedCallback="false"
             android:configChanges="mcc|mnc|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection">

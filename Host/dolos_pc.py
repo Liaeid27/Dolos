@@ -124,6 +124,57 @@ def gui():
         games=[g for g in games if Path(g["exe"])!=exe]
         games.append(dict(name=name.strip(),exe=str(exe),cover=cover));save(CUSTOM,games)
         status.configure(text="Gespeichert. Mit „Store aktualisieren“ an Apollo übernehmen.")
+    def update_game_helper():
+        import ctypes
+        script=ROOT/"SpielstartAktualisieren.ps1"
+        result=ctypes.windll.shell32.ShellExecuteW(None,"runas","powershell.exe",subprocess.list2cmdline(["-NoProfile","-File",str(script)]),str(ROOT),1)
+        if result<=32:raise ValueError("Windows hat die Aktualisierung nicht gestartet.")
+    def configure_save_folder():
+        from steam_aktion import control_root,folders,validate_folder,running,BUILTIN_PROFILES
+        from dolos_control import manifests
+        installed=manifests();titles={g["name"]+" ("+k+")":k for k,g in installed.items() if g["state"]=="installed"}
+        dialog=tk.Toplevel(root);dialog.title("Spielstände nach Profil");dialog.configure(bg=ink)
+        box=tk.Frame(dialog,bg=ink,padx=24,pady=18);box.pack(fill="both")
+        combo=ttk.Combobox(box,values=sorted(titles),state="readonly",width=48);combo.pack(pady=8)
+        def choose():
+            key=titles.get(combo.get())
+            if not key:raise ValueError("Ein installiertes Spiel auswählen.")
+            if key in BUILTIN_PROFILES:
+                messagebox.showinfo("Spielstände","Dieses Spiel hat bereits eigene Dolos-Profilpfade.");return
+            if running(key) or (control_root()/("active-"+key+".json")).exists():raise ValueError("Spiel beenden und Profilwechsel abschließen.")
+            selected=filedialog.askdirectory(parent=dialog,title="Exklusiven lokalen Spielstandordner auswählen")
+            if not selected:return
+            folder=validate_folder(selected);rows=folders()
+            if any(folder.is_relative_to(Path(v)) or Path(v).is_relative_to(folder) for k,v in rows.items() if k!=key):raise ValueError("Dieser Ordner gehört bereits zu einem anderen Spiel.")
+            if key in rows and Path(rows[key])!=folder:raise ValueError("Für dieses Spiel ist bereits ein anderer Ordner eingerichtet.")
+            if not messagebox.askyesno("Spielstandordner bestätigen","Steam Cloud für dieses Spiel deaktivieren. Enthält dieser Ordner ausschließlich die lokalen Spielstände dieses Titels? Dolos wechselt ihn beim Start eines Nebenprofils und stellt den Standardordner nach Spielende wieder her."):return
+            rows[key]=str(folder);save(control_root()/"save-folders.json",rows);dialog.destroy()
+        action(box,"Spielstandordner auswählen",choose,True).pack(fill="x")
+    def configure_logon():
+        import webbrowser,winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon") as key:
+                enabled=str(winreg.QueryValueEx(key,"AutoAdminLogon")[0])=="1"
+        except OSError:enabled=False
+        dialog=tk.Toplevel(root);dialog.title("Windows-Anmeldung");dialog.configure(bg=ink)
+        content=tk.Frame(dialog,bg=ink,padx=24,pady=18);content.pack(fill="both")
+        tk.Label(content,text="Automatische Anmeldung",bg=ink,fg=paper,font=("Segoe UI Semibold",17)).pack(anchor="w")
+        tk.Label(content,text=("In Windows bereits eingeschaltet." if enabled else "In Windows ausgeschaltet.")+" Für den Kaltstart das aktuelle Kontokennwort im Microsoft-Fenster eingeben und Enable wählen. Beim Aufwecken aus dem Standby gelten eigene Anmeldeoptionen.",wraplength=430,justify="left",bg=ink,fg=muted).pack(anchor="w",pady=12)
+        def open_tool():
+            path=Path.home()/"Downloads"/"AutoLogon"/"Autologon64.exe"
+            if not path.exists():
+                file=filedialog.askopenfilename(parent=dialog,title="Entpackte Microsoft-Autologon-Anwendung auswählen",filetypes=[("Autologon","Autologon*.exe")])
+                if not file:return
+                path=Path(file)
+            env=dict(os.environ,DOLOS_LOGON_TOOL=str(path))
+            check=subprocess.run(["powershell.exe","-NoProfile","-NonInteractive","-Command",
+                "$s=Get-AuthenticodeSignature -LiteralPath $env:DOLOS_LOGON_TOOL; if($s.Status -ne 'Valid' -or $s.SignerCertificate.GetNameInfo('SimpleName',$false) -ne 'Microsoft Corporation'){exit 1}"],
+                env=env,creationflags=subprocess.CREATE_NO_WINDOW,timeout=20)
+            if path.name.lower() not in ("autologon.exe","autologon64.exe","autologon64a.exe") or check.returncode:raise ValueError("Die Microsoft-Signatur der Autologon-Anwendung konnte nicht bestätigt werden.")
+            os.startfile(str(path))
+        action(content,"Microsoft Autologon öffnen",open_tool,True).pack(fill="x")
+        action(content,"Autologon von Microsoft beziehen",lambda:webbrowser.open("https://learn.microsoft.com/de-de/sysinternals/downloads/autologon")).pack(fill="x",pady=4)
+        action(content,"Anmeldung nach Standby einstellen",lambda:os.startfile("ms-settings:signinoptions")).pack(fill="x")
     def apollo_pin():
         from pc_status import apollo_port
         import webbrowser
@@ -233,7 +284,8 @@ def gui():
             pairing_tile(tiles,"TV-Verwaltung koppeln","Code für die Konsole anzeigen",pair,True).grid(row=0,column=1,sticky="ew",padx=(6,0))
         elif tab=="Einrichtung":
             for title,detail,button,fn in [
-                ("Windows-Anmeldung","Automatische Anmeldung für den nächsten PC-Start einrichten.","Microsoft-Einrichtung öffnen",lambda:__import__("webbrowser").open("https://learn.microsoft.com/de-de/sysinternals/downloads/autologon")),
+                ("Spielstände","Lokalen Spielstandordner für weitere Spiele einmal zuordnen.","Spiel auswählen",configure_save_folder),
+                ("Windows-Anmeldung","Automatische Anmeldung für den nächsten PC-Start einrichten.","Anmeldung einrichten",configure_logon),
                 ("1   Im Heimnetz verbinden","PC per Ethernet oder WLAN mit dem Router verbinden. Das Android-Gerät im selben Heimnetz anmelden.","PC-Adresse anzeigen",lambda:show("Verbindung")),
                 ("2   Spielstream koppeln","In Dolos auf Android IP eingeben wählen und die PC-Adresse übernehmen. Die vier Ziffern vom Android-Bildschirm hier auf dem PC bestätigen.","Apollo-PIN eingeben",apollo_pin),
                 ("3   PC-Verwaltung koppeln","Jetzt hier den sechsstelligen TV-Code anzeigen. Auf Android das Prüfzeichen vergleichen, den Code eingeben und Konsole öffnen wählen.","TV-Code anzeigen",pair)]:

@@ -14,6 +14,8 @@ PAUSED=False
 ATTEMPTS=collections.deque(maxlen=24)
 PENDING_OFF=False
 CATALOG=[]
+REQUIRED={}
+SIZE_STAMP=None
 DISKS=[]
 COVERS={}
 STORE_LINKS={}
@@ -38,6 +40,8 @@ def store_worker():
                 warm_heroes(folder,ART_FILES,MEDIA)
             except (ValueError,OSError):pass
         time.sleep(10 if not CATALOG else 300)
+
+from steam_aktion import BUILTIN_PROFILES,folders,profile_path,restore_idle,running
 
 def profile_helper_ready():
     helper=Path(os.environ["ProgramFiles"])/"Apollo"/"config"/"aster-steam-aktion.py"
@@ -86,7 +90,14 @@ def refresh_catalog():
     from cover_atlas import prepare
     try:ATLAS=prepare(DATA,ART_FILES)
     except (OSError,ValueError,subprocess.SubprocessError):ATLAS={}
-    CATALOG=[dict(id=k,name=v[0],state=states[k]) for k,v in games.items() if len(k)<=10]
+    global REQUIRED,SIZE_STAMP
+    try:
+        stamp=(steam/"appcache/appinfo.vdf").stat().st_mtime_ns
+        if stamp!=SIZE_STAMP:
+            from install_sizes import required_sizes
+            REQUIRED=required_sizes(steam,set(games));SIZE_STAMP=stamp
+    except (OSError,ValueError,IndexError):pass
+    CATALOG=[dict(id=k,name=v[0],required=REQUIRED.get(k,0),state=states[k]) for k,v in games.items() if len(k)<=10]
     disks=[]
     times=[]
     for lib in read_vdf(steam/"steamapps/libraryfolders.vdf")["libraryfolders"].values():
@@ -141,6 +152,9 @@ def manifests():
             try:
                 g=read_vdf(file)["AppState"];flags=int(g["StateFlags"])
                 active=bool(flags&(1048576|2097152|4194304|262144|524288|512))
+                remaining=int(g.get("BytesToDownload",0))>int(g.get("BytesDownloaded",0))
+                staging=int(g.get("BytesToStage",0))>int(g.get("BytesStaged",0))
+                active=active or remaining or staging or bool(flags & (2|32|1024|65536|131072))
                 state="paused" if flags&256 else "staging" if flags&(2097152|4194304) else "downloading" if active else "installed" if flags&4 else "waiting"
                 staged=state=="staging"
                 apps[g["appid"]]={"id":g["appid"],"name":g["name"],"state":state,"drive":folder.drive,"size":int(g.get("SizeOnDisk",0)),"done":int(g.get("BytesStaged" if staged else "BytesDownloaded",0)),"total":int(g.get("BytesToStage" if staged else "BytesToDownload",0))}
@@ -167,27 +181,67 @@ def steam_dialog(name,mode="inspect",drive=None):
         return json.loads(result.stdout.decode("utf-8-sig")) if result.returncode==0 else {}
     except (ValueError,OSError,subprocess.TimeoutExpired):return {}
 
+def install_to_drive(key,drive):
+    steam=steam_path()
+    libraries=read_vdf(steam/"steamapps/libraryfolders.vdf")["libraryfolders"]
+    choices=[index for index,library in libraries.items() if index.isascii() and index.isdecimal()
+             and Path(library["path"]).drive.casefold()==drive.casefold() and Path(library["path"]).is_dir()]
+    if len(choices)!=1 or not key.isascii() or not key.isdecimal():
+        raise ValueError("Steam-Bibliothek nicht eindeutig verfügbar.")
+    root=Path(libraries[choices[0]]["path"])
+    if shutil.disk_usage(root).free<REQUIRED.get(key,1):raise ValueError("Zu wenig freier Speicher auf "+drive)
+    subprocess.Popen([str(steam/"steam.exe"),"+app_install",key,choices[0]],creationflags=subprocess.CREATE_NO_WINDOW)
+
+def steam_space_error(steam,job):
+    # Only attribute errors logged after this request to this game.
+    path=steam/"logs"/"content_log.txt"
+    try:
+        import re
+        with path.open("rb") as stream:
+            stream.seek(max(0,stream.seek(0,2)-65536));lines=stream.read().decode("utf8","replace").splitlines()
+        for line in reversed(lines):
+            if not re.search(r"(?:AppID|App) "+re.escape(job["id"])+r"\b",line,re.I):continue
+            stamp=datetime.datetime.strptime(line[1:20],"%Y-%m-%d %H:%M:%S").timestamp()
+            if stamp<job["sentAt"]-1:break
+            if re.search(r"not enough (?:free )?disk space|disk full|insufficient disk space",line,re.I):return True
+    except (ValueError,OSError,KeyError):pass
+    return False
+
 def queue_step(apps):
     global QUEUE
     with LOCK:
         changed=False
         for q in list(QUEUE):
             current=apps.get(q["id"],{}).get("state")
+            if q.get("direct") and q.get("sent") and not q.get("error") and current not in ("installed","downloading","staging") and steam_space_error(steam_path(),q):
+                q["error"]="Auf dem gewählten Steam-Laufwerk ist zu wenig Speicher frei.";changed=True
             if q["action"]=="install" and current=="installed" or q["action"]=="remove" and not current:
                 QUEUE.remove(q);changed=True
+        for q in QUEUE:
+            if q["action"]=="install" and q.get("drive") and q.get("sent") and not q.get("direct") and not q.get("error") and not apps.get(q["id"]):
+                q["sent"]=False;changed=True
         if not PAUSED and QUEUE and not any(q.get("sent") for q in QUEUE):
             q=QUEUE[0]
-            try:os.startfile("steam://"+("install" if q["action"]=="install" else "uninstall")+"/"+q["id"]);q["sent"]=True;q["sentAt"]=int(time.time())
-            except OSError:q["error"]="Steam konnte nicht geöffnet werden."
+            try:
+                if q["action"]=="install" and q.get("drive"):
+                    install_to_drive(q["id"],q["drive"]);q["direct"]=True
+                else:os.startfile("steam://"+("install" if q["action"]=="install" else "uninstall")+"/"+q["id"])
+                q.pop("error",None)
+            except ValueError as err:q["error"]=str(err)
+            except (OSError,KeyError):q["error"]="Steam oder die gewählte Bibliothek ist nicht verfügbar."
+            q["sent"]=True;q["sentAt"]=int(time.time())
             changed=True
         if changed:write("queue.json",QUEUE)
 
 def worker():
     global LAST
+    seen={}
     while True:
         try:
+            try:restore_idle(seen)
+            except (OSError,ValueError,KeyError):pass
             apps=manifests();queue_step(apps)
-            pending=next((q.copy() for q in QUEUE if q.get("sent") and apps.get(q["id"],{}).get("state") not in ("downloading","staging")),None)
+            pending=next((q.copy() for q in QUEUE if q.get("sent") and not q.get("direct") and apps.get(q["id"],{}).get("state") not in ("downloading","staging")),None)
             prompt=steam_dialog(pending["name"],drive=pending.get("drive")) if pending else {}
             if pending and prompt:
                 prompt["id"]=pending["id"]
@@ -254,7 +308,7 @@ class Handler(BaseHTTPRequestHandler):
                     shutil.copyfileobj(stream,self.wfile)
                 return
             if self.path=="/status" and not post:
-                with LOCK:status=dict(LAST,hostBuild=329,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,profileLaunch=["105600","294100","1874880"] if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
+                with LOCK:status=dict(LAST,hostBuild=330,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
                 return self.reply(200,status)
             if self.path=="/catalog-media" and not post:return self.reply(200,MEDIA.copy())
             if self.path.startswith("/trophies/") and not post:
@@ -278,9 +332,20 @@ class Handler(BaseHTTPRequestHandler):
                 if req.get("action")=="close":return self.reply(200,{"accepted":close_game(game)})
                 if req.get("action")=="prepare":return self.reply(200,{"visible":screen(game,True)})
                 return self.reply(400,{})
+            if self.path=="/profile-folder" and post:
+                key=str(req.get("id",""));slot=req.get("slot")
+                if type(slot)!=int or slot not in (1,2,3) or key not in (BUILTIN_PROFILES|set(folders())):return self.reply(409,{"error":"Diesem Spiel in Dolos-PC unter Einrichtung einen lokalen Speicherordner zuordnen."})
+                path=profile_path(key,slot)
+                if key in folders() and (DATA/("active-"+key+".json")).exists():return self.reply(409,{"error":"Profilwechsel erst nach Spielende möglich."})
+                from steam_aktion import save_lock
+                with save_lock(key):
+                    if key in folders() and (DATA/("active-"+key+".json")).exists():return self.reply(409,{"error":"Spiel zuerst beenden."})
+                    path.mkdir(parents=True,exist_ok=True)
+                return self.reply(200,{"path":str(path)})
             if self.path.startswith("/foreground/") and not post:
                 from spiel_fenster import playing
-                return self.reply(200,{"visible":playing(self.path.rsplit("/",1)[1])})
+                key=self.path.rsplit("/",1)[1]
+                return self.reply(200,{"visible":playing(key),"running":running(key) if key.isdecimal() and len(key)<=10 else None})
             with LOCK:
                 if self.path=="/ping" and not post:return self.reply(200,{"ok":True})
                 if self.path=="/profiles" and post:
@@ -290,15 +355,30 @@ class Handler(BaseHTTPRequestHandler):
                     if not req.get("seed") or str(slot) not in names:
                         names[str(slot)]=name.strip();write("profiles.json",names)
                     return self.reply(200,names)
+                if self.path=="/launch" and post:
+                    key=str(req.get("id",""));profile=req.get("profile");nonce=req.get("request","")
+                    if LAST.get("apps",{}).get(key,{}).get("state")!="installed" or not key.isdecimal() or len(key)>10 or type(profile)!=int or profile not in range(4) or not isinstance(nonce,str) or len(nonce)!=36:
+                        return self.reply(409,{"error":"Spiel noch nicht bereit."})
+                    last=read("last-launch.json",{})
+                    if last.get("request")==nonce and last.get("id")==key and last.get("profile")==profile:return self.reply(200,{"ok":True})
+                    if last and (running(last["id"]) or time.time()-last["time"]<12):
+                        if last["id"]==key and last["profile"]==profile:return self.reply(200,{"ok":True})
+                        return self.reply(409,{"error":"Das vorige Spiel zuerst beenden."})
+                    if running(key):return self.reply(409,{"error":"Dieses Spiel ist bereits auf dem PC geöffnet."})
+                    from steam_aktion import launch_game
+                    try:launch_game(steam_path(),key,profile)
+                    except (ValueError,OSError) as err:return self.reply(409,{"error":str(err)})
+                    write("last-launch.json",dict(id=key,profile=profile,request=nonce,time=time.time()))
+                    return self.reply(200,{"ok":True})
                 if self.path=="/select" and post:
                     key=str(req.get("id",""))
                     if not key.isdecimal() or len(key)>10 or LAST.get("apps",{}).get(key,{}).get("state")!="installed":
                         return self.reply(409,{"error":"Spiel noch nicht bereit."})
                     profile=req.get("profile",0)
-                    if type(profile) is not int or profile not in range(4) or profile and key not in ("105600","294100","1874880"):
+                    if type(profile) is not int or profile not in range(4) or profile and key not in (BUILTIN_PROFILES|set(folders())):
                         return self.reply(409,{"error":"Kein eigener Speicherpfad für dieses Spiel."})
                     if profile and not profile_helper_ready():
-                        return self.reply(409,{"error":"Am PC den Store einmal als Administrator aktualisieren."})
+                        return self.reply(409,{"error":"Dolos-PC → Einrichtung → Spielstart aktualisieren."})
                     previous=read("start.json",{})
                     if previous.get("until",0)>time.time() and (previous.get("id")!=key or previous.get("profile",0)!=profile):
                         return self.reply(409,{"error":"Ein anderes Spiel startet gerade."})
@@ -335,6 +415,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif action in ("install","remove") and allowed(key):
                     drive=req.get("drive")
                     if drive and drive not in {disk.get("drive") for disk in DISKS}:return self.reply(400,{"error":"Steam-Laufwerk nicht verfügbar."})
+                    if action=="install" and drive and shutil.disk_usage(drive+"/").free<REQUIRED.get(key,1):return self.reply(409,{"error":"Zu wenig freier Speicher auf "+drive})
                     if not any(q["id"]==key for q in QUEUE):QUEUE.append({"drive":drive,"id":key,"action":action,"sent":False,"name":str(req.get("name",key))[:120]})
                 else:return self.reply(400,{"error":"Unbekannter Spieleintrag."})
                 write("queue.json",QUEUE);return self.reply(200,{"ok":True})

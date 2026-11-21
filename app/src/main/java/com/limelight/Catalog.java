@@ -28,6 +28,7 @@ final class Catalog {
     final WebView web;
     boolean ready;
     String last="";
+    int virtualAppId;
     int liveAppId;
     boolean liveRunning;
     JSONArray liveRows=new JSONArray();
@@ -35,7 +36,7 @@ final class Catalog {
     final Map<String,AppView.AppObject> removers=new HashMap<>();
     void update(){
         if(!ready)return;
-        entries.clear();removers.clear();liveAppId=0;liveRunning=false;Set<String> seen=new HashSet<>();
+        entries.clear();removers.clear();virtualAppId=0;liveAppId=0;liveRunning=false;Set<String> seen=new HashSet<>();
         JSONArray data=new JSONArray();
         String uuid=home.host.getIntent().getStringExtra(AppView.UUID_EXTRA);
         Set<String> hidden=home.hiddenTiles(),pinned=home.extraPins();
@@ -45,6 +46,7 @@ final class Catalog {
         }
         for(int i=0;home.library!=null && i<home.library.getCount();i++){
             AppView.AppObject g=(AppView.AppObject)home.library.getItem(i);
+            if("Virtual Display".equalsIgnoreCase(g.toString()))virtualAppId=g.app.getAppId();
             if("[Dolos Live]".equals(g.toString())){liveAppId=g.app.getAppId();liveRunning=g.isRunning;continue;}
             if(!home.belongsToProfile(g)) continue;
             seen.add(steamId(g.toString()));
@@ -83,11 +85,36 @@ final class Catalog {
             }
         });if(home.link.prefs().contains("token"))home.link.run("status","","");}
     }
+    private String barState="";
+    void updateBar(){
+        if(!ready)return;
+        int bars=-1;String label="Offline";
+        try{
+            android.net.ConnectivityManager cm=(android.net.ConnectivityManager)home.host.getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+            android.net.NetworkInfo net=cm.getActiveNetworkInfo();
+            if(net!=null&&net.isConnected()){
+                label=net.getType()==android.net.ConnectivityManager.TYPE_ETHERNET?"LAN":"Netzwerk";
+                if(net.getType()==android.net.ConnectivityManager.TYPE_WIFI){
+                    android.net.wifi.WifiManager wifi=(android.net.wifi.WifiManager)home.host.getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+                    int rssi=wifi.getConnectionInfo().getRssi();
+                    if(rssi>-127)bars=android.net.wifi.WifiManager.calculateSignalLevel(rssi,5);
+                    label=bars<0?"WLAN":"WLAN · "+bars+" von 4";
+                }
+            }
+        }catch(RuntimeException ignored){label="Netzwerk";}
+        boolean pad=false;
+        for(int i:android.view.InputDevice.getDeviceIds()){
+            android.view.InputDevice d=android.view.InputDevice.getDevice(i);
+            if(d!=null&&!d.isVirtual()&&d.supportsSource(android.view.InputDevice.SOURCE_GAMEPAD)){pad=true;break;}
+        }
+        String script="systemBar("+JSONObject.quote(label)+","+bars+","+pad+")";
+        if(!barState.equals(script)){barState=script;web.evaluateJavascript(script,null);}
+    }
     void applyTheme(){
         boolean controller=false;for(int device:android.view.InputDevice.getDeviceIds()){
             android.view.InputDevice d=android.view.InputDevice.getDevice(device);if(d!=null&&!d.isVirtual()&&d.supportsSource(android.view.InputDevice.SOURCE_GAMEPAD)){controller=true;break;}
         }
-        web.evaluateJavascript("window.tvInput="+ConsoleDock.isTV(home.host)+";if(window.tvInput)document.getElementById('pairPad').hidden="+controller,null);
+        web.evaluateJavascript("window.tvInput="+ConsoleDock.isTV(home.host)+";if(window.tvInput)document.getElementById('pairPad').hidden="+(controller||!ConsoleHome.appearance(home.host).getBoolean("padPrompt",true)),null);
         boolean enhanced="enhanced".equals(ConsoleHome.appearance(home.host).getString("theme","normal"));
         android.content.SharedPreferences settings=ConsoleHome.appearance(home.host);
         web.evaluateJavascript("window.tvTrailerAudio="+(!BuildConfig.REMOTE_BUILD&&settings.getBoolean("trailerAudio",true)),null);
@@ -143,7 +170,7 @@ final class Catalog {
                 return new WebResourceResponse("text/plain","UTF-8",404,"Missing",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));
             }
             @Override public void onPageFinished(WebView view,String url){
-                if((ORIGIN+"index.html").equals(url)){ready=true;applyTheme();
+                if((ORIGIN+"index.html").equals(url)){ready=true;barState="";updateBar();applyTheme();
                     if(!BuildConfig.REMOTE_BUILD)web.evaluateJavascript("restoreArtwork("+JSONObject.quote(home.host.getIntent().getStringExtra(AppView.UUID_EXTRA))+")",null);
                     update();}
             }
@@ -156,6 +183,10 @@ final class Catalog {
                 else if("close".equals(action))home.host.finish();
                 else if("studio".equals(action))ConsoleStudio.open(home.host,u.getLastPathSegment(),home.host.getIntent().getStringExtra(AppView.UUID_EXTRA),home.host.getSharedPreferences("studio",0).getString("lastHost",null));
                 else if("settings".equals(action))ConsoleStudio.open(home.host,"video",home.host.getIntent().getStringExtra(AppView.UUID_EXTRA),home.host.getSharedPreferences("studio",0).getString("lastHost",null));
+                else if("wifi".equals(action)){
+                    try{home.host.startActivity(new android.content.Intent(android.provider.Settings.ACTION_WIFI_SETTINGS));}
+                    catch(android.content.ActivityNotFoundException e){home.host.startActivity(new android.content.Intent(android.provider.Settings.ACTION_SETTINGS));}
+                }
                 else if("bluetooth".equals(action)){
                     try{home.host.startActivity(new android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));}
                     catch(android.content.ActivityNotFoundException e){home.host.startActivity(new android.content.Intent(android.provider.Settings.ACTION_SETTINGS));}
@@ -168,6 +199,7 @@ final class Catalog {
                 else if(Arrays.asList("pair","status","measure","pause","resume").contains(action))home.link.run(action,"","");
                 else if(Arrays.asList("confirm","cancel","dismiss","retry").contains(action))home.link.run(action,u.getLastPathSegment(),"");
                 else if(g!=null && "trophies".equals(action))home.link.run("trophies",steamId(g.toString()),"");
+                else if(g!=null && "savepath".equals(action))home.link.createSavePath(steamId(g.toString()));
                 else if(g!=null && "play".equals(action)){home.link.play(g);}
                 else if(g!=null && ("install".equals(action)||"remove".equals(action))){
                     String id=steamId(g.toString());if(!id.isEmpty()){
@@ -193,6 +225,12 @@ final class Catalog {
                     } else web.evaluateJavascript("document.activeElement.click()",null);
                 });
                 return true;
+            }
+            if(key==KeyEvent.KEYCODE_BUTTON_L1||key==KeyEvent.KEYCODE_BUTTON_R1||key==KeyEvent.KEYCODE_BUTTON_L2||key==KeyEvent.KEYCODE_BUTTON_R2){
+                if(event.getAction()==KeyEvent.ACTION_UP){
+                    String route=key==KeyEvent.KEYCODE_BUTTON_L1?"home":key==KeyEvent.KEYCODE_BUTTON_R1?"store":key==KeyEvent.KEYCODE_BUTTON_R2?"next":"previous";
+                    web.evaluateJavascript("shoulder('"+route+"')",null);
+                }return true;
             }
             if(key==KeyEvent.KEYCODE_BUTTON_Y){if(event.getAction()==KeyEvent.ACTION_UP)web.evaluateJavascript("gameOptionsForFocus()",null);return true;}
             if(key==KeyEvent.KEYCODE_MENU || key==KeyEvent.KEYCODE_BUTTON_START || key==KeyEvent.KEYCODE_BUTTON_MODE){

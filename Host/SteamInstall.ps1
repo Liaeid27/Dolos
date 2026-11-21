@@ -1,5 +1,6 @@
 ﻿param([Parameter(Mandatory)][string]$Title,[Parameter(Mandatory)][string]$SteamRoot,[string]$Drive,[switch]$Install)
 $ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Drawing,System.Runtime.WindowsRuntime
 Add-Type -TypeDefinition @"
 using System;

@@ -27,13 +27,17 @@ const link=(action,row={})=>{location.href="studio://"+action+"/"+encodeURICompo
 function notice(t){$("#status").textContent=t}
 function available(v){$("#install").hidden=!v;$("#install").textContent="Build "+v+" installieren"}
 function studioState(data){
- state=data;$$("[data-info]").forEach(b=>{const key=b.dataset.info,on=!!data[key];if(key==="trailerAudio")b.hidden=!data.tvEdition;b.textContent=b.textContent.split(" · ")[0]+" · "+(on?"Ein":"Aus");b.setAttribute("aria-pressed",String(on));b.onclick=()=>link("homeinfo",{id:key})});$(".route").hidden=!data.route;$(".route").textContent="Letzter Spielstream · "+(data.route||"");$$("[data-console]").forEach(b=>b.hidden=b.dataset.console!=="setup"&&!data.connectedMenu);document.body.classList.toggle("enhanced",data.theme==="enhanced");$("#version").textContent="Installiert · Build "+data.build;
+ state=data;$("#menuBinding").textContent="Spielmenü · "+(["Start halten","Select halten","R3 halten","L3 halten"][data.menuBinding||0]);$("#menuBinding").onclick=()=>link("menuBinding");
+ $("#faceLayout").textContent="Aktionstasten · "+(["Standard","A/B tauschen","X/Y tauschen","A/B und X/Y tauschen"][data.faceLayout||0]);$("#faceLayout").onclick=()=>link("faceLayout");$("#padPrompt").textContent="Kopplung beim Start anbieten · "+(data.padPrompt?"Ein":"Aus");$("#padPrompt").setAttribute("aria-pressed",String(!!data.padPrompt));
+ $("#bluetoothPad").onclick=()=>link("bluetooth");$("#padPrompt").onclick=()=>link("padPrompt");$$("[data-info]").forEach(b=>{const key=b.dataset.info,on=!!data[key];if(key==="trailerAudio")b.hidden=!data.tvEdition;b.textContent=b.textContent.split(" · ")[0]+" · "+(on?"Ein":"Aus");b.setAttribute("aria-pressed",String(on));b.onclick=()=>link("homeinfo",{id:key})});$(".route").hidden=!data.route;$(".route").textContent="Letzter Spielstream · "+(data.route||"");$$("[data-console]").forEach(b=>b.hidden=b.dataset.console!=="setup"&&!data.connectedMenu);document.body.classList.toggle("enhanced",data.theme==="enhanced");$("#version").textContent="Installiert · Build "+data.build;
  if(!started){started=true;openPage(labels[data.section]?data.section:"appearance");document.querySelector("nav .active").focus();if(compact.matches&&data.section==="appearance")mobileIndex()}
  else if(selected)detail(selected);else if(page==="library")draw();
  $$("[data-theme]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.theme===state.theme)));
 }
+function nextCategory(step){const nav=$$("nav [data-page]");const i=nav.indexOf($("nav .active"));const b=nav[(i+step+nav.length)%nav.length];openPage(b.dataset.page);b.focus()}
 function openPage(name){
  indexView=false;document.body.classList.remove("indexView");$(".crumb").textContent=compact.matches?"Einstellungen":"Dolos";page=name;selected=null;$("#filterChoices").hidden=true;notice("");editing=null;for(const id of ["system","appearance","library","themes","homeinfo","updates","details","streamPage"])$("#"+id).hidden=id!==(streamPages.includes(name)?"streamPage":name);
+ $("#pairSettings").hidden=name!=="controller";
  if(streamPages.includes(name)){renderOptions();link("stream")}
  $$("nav [data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===(["library","themes","homeinfo"].includes(name)?"appearance":name)));
  $("#title").textContent=labels[name];if(name==="library")draw();

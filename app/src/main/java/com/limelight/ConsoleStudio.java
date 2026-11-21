@@ -114,7 +114,7 @@ public class ConsoleStudio extends Activity {
     static String message(Exception e){return e.getMessage()==null?"Vorgang fehlgeschlagen.":e.getMessage();}
     void sync(){
         try{
-            JSONObject d=new JSONObject().put("tvEdition",!BuildConfig.REMOTE_BUILD).put("trailerAudio",ConsoleHome.appearance(this).getBoolean("trailerAudio",true)).put("on",ConsoleHome.appearance(this).getString("on","dolos")).put("off",ConsoleHome.appearance(this).getString("off","dolos")).put("theme",ConsoleHome.appearance(this).getString("theme","normal")).put("route",prefs.getString("route","")).put("time",ConsoleHome.appearance(this).getBoolean("time",false)).put("status",ConsoleHome.appearance(this).getBoolean("status",false)).put("recent",ConsoleHome.appearance(this).getBoolean("recent",false)).put("build",BuildConfig.VERSION_CODE).put("section",getIntent().getStringExtra("section")).put("connectedMenu",getIntent().getBooleanExtra("libraryHost",false));
+            JSONObject d=new JSONObject().put("menuBinding",ConsoleHome.appearance(this).getInt("menuBinding",0)).put("faceLayout",ConsoleHome.appearance(this).getInt("faceLayout",0)).put("padPrompt",ConsoleHome.appearance(this).getBoolean("padPrompt",true)).put("tvEdition",!BuildConfig.REMOTE_BUILD).put("trailerAudio",ConsoleHome.appearance(this).getBoolean("trailerAudio",true)).put("on",ConsoleHome.appearance(this).getString("on","dolos")).put("off",ConsoleHome.appearance(this).getString("off","dolos")).put("theme",ConsoleHome.appearance(this).getString("theme","normal")).put("route",prefs.getString("route","")).put("time",ConsoleHome.appearance(this).getBoolean("time",false)).put("status",ConsoleHome.appearance(this).getBoolean("status",false)).put("recent",ConsoleHome.appearance(this).getBoolean("recent",false)).put("build",BuildConfig.VERSION_CODE).put("section",getIntent().getStringExtra("section")).put("connectedMenu",getIntent().getBooleanExtra("libraryHost",false));
             JSONArray files=new JSONArray();for(String k:prefs.getAll().keySet())if(k.startsWith("file.")&&film(this,k.substring(5),"on")!=null)files.put(new JSONObject(prefs.getString(k,"{}")));
             js("studioState("+d.put("files",files)+")");
         }catch(Exception e){note(message(e));}
@@ -130,6 +130,13 @@ public class ConsoleStudio extends Activity {
         Uri local=film(this,key,mode);
         switch(action){
             case "close":finish();break;
+            case "bluetooth":
+                try{startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));}
+                catch(ActivityNotFoundException e){startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}break;
+            case "menuBinding":case "faceLayout":
+                ConsoleHome.appearance(this).edit().putInt(action,(ConsoleHome.appearance(this).getInt(action,0)+1)%4).apply();sync();break;
+            case "padPrompt":
+                ConsoleHome.appearance(this).edit().putBoolean("padPrompt",!ConsoleHome.appearance(this).getBoolean("padPrompt",true)).apply();sync();break;
             case "consoleAction":
                 if("setup".equals(key)){ConsoleBoot.setup(this);break;}
                 if(getIntent().getBooleanExtra("libraryHost",false)&&Arrays.asList("storage","network","pair","profile","power").contains(key)){
@@ -223,6 +230,11 @@ public class ConsoleStudio extends Activity {
         },install?"Update wird geprüft und heruntergeladen …":"GitHub-Releases werden geprüft …");
     }
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent e){
+        int shoulder=e.getKeyCode();
+        if(shoulder==android.view.KeyEvent.KEYCODE_BUTTON_L1||shoulder==android.view.KeyEvent.KEYCODE_BUTTON_R1){
+            if(e.getAction()==android.view.KeyEvent.ACTION_UP)js("nextCategory("+ (shoulder==android.view.KeyEvent.KEYCODE_BUTTON_R1?1:-1)+")");
+            return true;
+        }
         int k=e.getKeyCode();
         if(web.hasFocus()&&(k==android.view.KeyEvent.KEYCODE_BUTTON_A||k==android.view.KeyEvent.KEYCODE_DPAD_CENTER)){
             if(e.getAction()==android.view.KeyEvent.ACTION_UP)web.evaluateJavascript("document.activeElement.tagName==='INPUT'",input->{

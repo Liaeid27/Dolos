@@ -23,6 +23,9 @@
         <item name="android:windowNoTitle">true</item>
     </style>
 
+    <style name="DolosLibraryTheme" parent="AppTheme">
+        <item name="android:windowBackground">@drawable/dolos_window_plate</item>
+    </style>
     <style name="StreamBaseTheme" parent="AppBaseTheme">
         <!-- Transparent streaming background to avoid extra overdraw -->
         <item name="android:windowBackground">@android:color/transparent</item>

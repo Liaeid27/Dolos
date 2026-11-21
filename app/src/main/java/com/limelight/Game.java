@@ -1356,6 +1356,15 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         return (byte) modifierFlags;
     }
 
+    private volatile boolean returningToLibrary;
+    private void returnToLibrary(){
+        if(isFinishing()||isDestroyed())return;
+        returningToLibrary=true;stopCurtainMonitor=true;
+        Intent home=new Intent(this,AppView.class).putExtra(AppView.UUID_EXTRA,getIntent().getStringExtra(EXTRA_PC_UUID))
+                .putExtra(AppView.NAME_EXTRA,getIntent().getStringExtra(EXTRA_PC_NAME)).putExtra("afterGame",true);
+        home.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        startActivity(home);overridePendingTransition(0,0);finish();
+    }
     private String screenKey="";
     private void guardGameDisplay() {
         android.content.SharedPreferences prefs=getSharedPreferences("dolos-control-"+getIntent().getStringExtra(EXTRA_PC_UUID),MODE_PRIVATE);
@@ -1372,29 +1381,43 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             StringBuilder b=new StringBuilder();for(int i=0;i<12;i++)b.append(String.format(java.util.Locale.US,"%02x",bytes[i]&255));key=b.toString();
         }catch(Exception ignored){}
         screenKey=key;final String path="/foreground/"+key,host=getIntent().getStringExtra(EXTRA_HOST);
-        final android.widget.Button exit=new android.widget.Button(this);exit.setText("Zur Startseite　 ·　 Im Spiel: Start oder Select halten");exit.setAllCaps(false);
+        final android.widget.Button exit=new android.widget.Button(this);exit.setText("Zur Startseite　 ·　 Spielmenü-Taste halten");exit.setAllCaps(false);
         exit.setOnClickListener(v->finish());
         FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-2,-2,android.view.Gravity.BOTTOM|android.view.Gravity.CENTER_HORIZONTAL);
         lp.bottomMargin=(int)(24*getResources().getDisplayMetrics().density);launchCurtain.addView(exit,lp);
         new Thread(()->{
-            boolean previous=false;long prepared=0;
+            String nonce=getIntent().getStringExtra("managedLaunch");
+            if(nonce!=null)try{
+                ControlLink.request(host,"/launch",new org.json.JSONObject().put("request",nonce).put("id",screenKey).put("profile",getIntent().getIntExtra("launchProfile",0)),pin,token);
+            }catch(Exception e){runOnUiThread(()->ConsoleDock.show(this,e.getMessage(),new String[]{"Zur Startseite"},i->returnToLibrary()));return;}
+            boolean previous=false,wasRunning=false;int readySamples=0,closedSamples=0;long prepared=0;
             final Runnable cover=()->{if(!stopCurtainMonitor&&!isFinishing())launchCurtain.setVisibility(View.VISIBLE);};
             while(!stopCurtainMonitor){
                 boolean visible=false;
                 try{
-                    visible=ControlLink.request(host,path,null,pin,token).optBoolean("visible");
+                    org.json.JSONObject state=ControlLink.request(host,path,null,pin,token);
+                    visible=state.optBoolean("visible");
+                    if(state.optBoolean("running"))wasRunning=true;
+                    if(wasRunning&&!visible&&state.has("running")&&!state.isNull("running")&&!state.optBoolean("running"))closedSamples++;else closedSamples=0;
+                    if(closedSamples>=4){
+                        stopCurtainMonitor=true;
+                        try{NvHTTP session=new NvHTTP(new ComputerDetails.AddressTuple(host,getIntent().getIntExtra(EXTRA_PORT,NvHTTP.DEFAULT_HTTP_PORT)),getIntent().getIntExtra(EXTRA_HTTPS_PORT,0),getIntent().getStringExtra(EXTRA_UNIQUEID),consoleHostCert,PlatformBinding.getCryptoProvider(this));
+                            if(session.getCurrentGame(session.getServerInfo(true))==getIntent().getIntExtra(EXTRA_APP_ID,0))session.quitApp();
+                        }catch(Exception ignored){}
+                        runOnUiThread(this::returnToLibrary);return;
+                    }
                     if(!visible&&android.os.SystemClock.elapsedRealtime()-prepared>3000){
                         prepared=android.os.SystemClock.elapsedRealtime();
                         ControlLink.request(host,"/screen/"+screenKey,new org.json.JSONObject().put("action","prepare"),pin,token);
                     }
                 }catch(Exception ignored){}
-                final boolean show=visible;
+                readySamples=visible?readySamples+1:0;final boolean show=readySamples>=2;
                 final boolean changed=previous!=visible;runOnUiThread(()->{
                     if(stopCurtainMonitor||isFinishing())return;
                     launchCurtain.removeCallbacks(cover);
                     boolean covered=launchCurtain.getVisibility()==View.VISIBLE;
                     launchCurtain.setVisibility(show?View.GONE:View.VISIBLE);
-                    if(show){if(changed||covered)streamView.requestFocus();launchCurtain.postDelayed(cover,1600);}
+                    if(show){if(changed||covered)streamView.requestFocus();launchCurtain.postDelayed(cover,3000);}
                     else if(changed)exit.requestFocus();
                 });
                 previous=visible;
@@ -1418,13 +1441,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         if(!screenKey.isEmpty()&&pin!=null&&token!=null){
                             String pc=launch.getStringExtra(EXTRA_HOST);
                             org.json.JSONObject ack=ControlLink.request(pc,"/screen/"+screenKey,new org.json.JSONObject().put("action","close"),pin,token);
-                            if(!ack.optBoolean("accepted") && http.getCurrentGame(http.getServerInfo(true))==0){runOnUiThread(this::finish);return;}
+                            if(!ack.optBoolean("accepted") && (http.getCurrentGame(http.getServerInfo(true))==0 || !ControlLink.request(pc,"/foreground/"+screenKey,null,pin,token).optBoolean("running",true))){if(http.getCurrentGame(http.getServerInfo(true))==getIntent().getIntExtra(EXTRA_APP_ID,0))http.quitApp();runOnUiThread(this::returnToLibrary);return;}
                             if(!ack.optBoolean("accepted"))throw new java.io.IOException("Spielfenster nicht erreichbar. Stream über das Kontrollzentrum trennen.");
-                            Thread.sleep(700);
-                            if(ControlLink.request(pc,"/foreground/"+screenKey,null,pin,token).optBoolean("visible"))throw new java.io.IOException("Prüfe, ob das Spiel das Beenden bestätigen möchte.");
+                            boolean open=true;
+                            for(int i=0;i<10&&open;i++){Thread.sleep(350);open=ControlLink.request(pc,"/foreground/"+screenKey,null,pin,token).optBoolean("visible");}
+                            if(open)throw new java.io.IOException("Das Spiel wartet auf eine Bestätigung. Im Spiel den Beenden-Dialog abschließen.");
                         }
-                        if(http.getCurrentGame(http.getServerInfo(true))!=0 && !http.quitApp()) throw new java.io.IOException("Sitzung konnte nicht beendet werden");
-                        runOnUiThread(this::finish);
+                        if(http.getCurrentGame(http.getServerInfo(true))==getIntent().getIntExtra(EXTRA_APP_ID,0) && !http.quitApp()) throw new java.io.IOException("Sitzung konnte nicht beendet werden");
+                        runOnUiThread(this::returnToLibrary);
                     } catch(Exception e) {
                         runOnUiThread(()->Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show());
                     }
@@ -1435,9 +1459,16 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         int key=event.getKeyCode();
+        if(connected && event.isFromSource(android.view.InputDevice.SOURCE_GAMEPAD)){
+            int flags=ConsoleHome.appearance(this).getInt("faceLayout",0), mapped=key;
+            if((flags&1)!=0){if(key==KeyEvent.KEYCODE_BUTTON_A)mapped=KeyEvent.KEYCODE_BUTTON_B;else if(key==KeyEvent.KEYCODE_BUTTON_B)mapped=KeyEvent.KEYCODE_BUTTON_A;}
+            if((flags&2)!=0){if(key==KeyEvent.KEYCODE_BUTTON_X)mapped=KeyEvent.KEYCODE_BUTTON_Y;else if(key==KeyEvent.KEYCODE_BUTTON_Y)mapped=KeyEvent.KEYCODE_BUTTON_X;}
+            if(mapped!=key)event=new KeyEvent(event.getDownTime(),event.getEventTime(),event.getAction(),mapped,event.getRepeatCount(),event.getMetaState(),event.getDeviceId(),event.getScanCode(),event.getFlags(),event.getSource());
+        }
         boolean remoteBack=key==KeyEvent.KEYCODE_BACK && !event.isFromSource(android.view.InputDevice.SOURCE_GAMEPAD);
         boolean heldStart=false;
-        if(connected && (key==KeyEvent.KEYCODE_BUTTON_START || key==KeyEvent.KEYCODE_BUTTON_SELECT)) {
+        int[] bindings={KeyEvent.KEYCODE_BUTTON_START,KeyEvent.KEYCODE_BUTTON_SELECT,KeyEvent.KEYCODE_BUTTON_THUMBR,KeyEvent.KEYCODE_BUTTON_THUMBL};
+        if(connected && key==bindings[ConsoleHome.appearance(this).getInt("menuBinding",0)&3]) {
             if(event.getAction()==KeyEvent.ACTION_DOWN) return true;
             heldStart=event.getEventTime()-event.getDownTime()>=550;
             if(!heldStart) {
@@ -1445,7 +1476,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 return super.dispatchKeyEvent(event);
             }
         }
-        if (connected && (heldStart || remoteBack || key==KeyEvent.KEYCODE_MENU || key==KeyEvent.KEYCODE_BUTTON_MODE)) {
+        if (connected && (heldStart || remoteBack || key==KeyEvent.KEYCODE_MENU)) {
             if (event.getAction()==KeyEvent.ACTION_UP) {
                 String[] options={"Fortsetzen","Lautstärke","Stream-Statistik","Stream trennen","Spiel beenden"};
                 ConsoleDock.show(this,options,index->{
@@ -2446,6 +2477,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public void connectionTerminated(final int errorCode) {
+        if(returningToLibrary||errorCode==MoonBridge.ML_ERROR_GRACEFUL_TERMINATION && !stopCurtainMonitor && !isFinishing()){runOnUiThread(this::returnToLibrary);return;}
         // Perform a connection test if the failure could be due to a blocked port
         // This does network I/O, so don't do it on the main thread.
         final int portFlags = MoonBridge.getPortFlagsFromTerminationErrorCode(errorCode);

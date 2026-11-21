@@ -53,7 +53,21 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
     private volatile boolean wakeAttempted;
     private ConsoleHome home;
     private android.widget.ImageView startupStill;
-    private android.widget.ProgressBar startupProgress;
+    private android.widget.LinearLayout startupProgress;
+    private final Runnable pollBar=new Runnable(){public void run(){if(!inForeground||home==null)return;home.console.updateBar();home.postDelayed(this,5000);}};
+    private boolean offeredPairing;
+    private void offerController(){
+        if(offeredPairing||isFinishing()||isDestroyed()||!inForeground||!ConsoleDock.isTV(this)||!ConsoleHome.appearance(this).getBoolean("padPrompt",true))return;
+        offeredPairing=true;
+        for(int id:android.view.InputDevice.getDeviceIds()){
+            android.view.InputDevice device=android.view.InputDevice.getDevice(id);
+            if(device!=null&&!device.isVirtual()&&device.supportsSource(android.view.InputDevice.SOURCE_GAMEPAD))return;
+        }
+        ConsoleDock.show(this,"Controller verbinden",new String[]{"Mit Fernbedienung fortfahren","Bluetooth-Geräte öffnen"},index->{
+            if(index==1)try{startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));}
+            catch(android.content.ActivityNotFoundException e){startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}
+        });
+    }
     void waitForLibraryArt(){
         if(startupStill==null)return;
         home.console.web.evaluateJavascript("document.querySelectorAll('#rail .tile:not(.bag)').length===0 || !!document.querySelector('#rail .atlasCover') || Array.from(document.querySelectorAll('#rail img')).some(i=>i.naturalWidth>0)",ready->{
@@ -64,7 +78,7 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
     void revealLibrary(){
         final android.widget.ImageView image=startupStill;if(image==null)return;
         if(startupProgress!=null){home.removeView(startupProgress);startupProgress=null;}
-        startupStill=null;image.animate().alpha(0).setDuration(320).withEndAction(()->home.removeView(image));
+        startupStill=null;image.animate().alpha(0).setDuration(440).withEndAction(()->{home.removeView(image);offerController();});
     }
     private android.media.MediaPlayer ambience;
     void setFilmAudio(boolean active){if(ambience!=null){float volume=active?0f:(BuildConfig.REMOTE_BUILD?1f:.18f);ambience.setVolume(volume,volume);}}
@@ -310,15 +324,23 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
             public void quit() { quitSession(); }
         });
         setContentView(home);
-        if(!BuildConfig.REMOTE_BUILD){
+        if(!BuildConfig.REMOTE_BUILD&&!getIntent().getBooleanExtra("afterGame",false)){
             startupStill=new android.widget.ImageView(this);startupStill.setBackgroundColor(android.graphics.Color.BLACK);
             startupStill.setImageResource(R.drawable.dolos_transition);startupStill.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
-            home.addView(startupStill,new android.widget.FrameLayout.LayoutParams(-1,-1));startupStill.setScaleX(1.035f);startupStill.setScaleY(1.035f);startupStill.animate().scaleX(1f).scaleY(1f).setDuration(2900);startupStill.postDelayed(this::revealLibrary,5500);
-            startupProgress=new android.widget.ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
-            startupProgress.setIndeterminate(true);
-            int unit=(int)(getResources().getDisplayMetrics().density*4);
-            android.widget.FrameLayout.LayoutParams bar=new android.widget.FrameLayout.LayoutParams(unit*30,unit,android.view.Gravity.CENTER);
-            bar.topMargin=unit*18;home.addView(startupProgress,bar);
+            home.addView(startupStill,new android.widget.FrameLayout.LayoutParams(-1,-1));startupStill.postDelayed(this::revealLibrary,5500);
+            startupProgress=new android.widget.LinearLayout(this);
+            float density=getResources().getDisplayMetrics().density;
+            for(int n=0;n<3;n++){
+                android.view.View dot=new android.view.View(this);
+                android.graphics.drawable.GradientDrawable shape=new android.graphics.drawable.GradientDrawable();
+                shape.setShape(android.graphics.drawable.GradientDrawable.OVAL);shape.setColor(0xffc7d7ed);dot.setBackground(shape);
+                int size=Math.max(3,Math.round(4*density));android.widget.LinearLayout.LayoutParams lp=new android.widget.LinearLayout.LayoutParams(size,size);
+                lp.setMargins(size,0,size,0);startupProgress.addView(dot,lp);
+                android.view.animation.AlphaAnimation pulse=new android.view.animation.AlphaAnimation(.3f,1f);
+                pulse.setRepeatMode(android.view.animation.Animation.REVERSE);pulse.setRepeatCount(-1);pulse.setDuration(600);pulse.setStartOffset(n*140);dot.startAnimation(pulse);
+            }
+            android.widget.FrameLayout.LayoutParams bar=new android.widget.FrameLayout.LayoutParams(-2,-2,android.view.Gravity.BOTTOM|android.view.Gravity.CENTER_HORIZONTAL);
+            bar.bottomMargin=Math.round(40*density);home.addView(startupProgress,bar);
         }
         getWindow().getDecorView().setSystemUiVisibility(5894);
 
@@ -370,12 +392,22 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
     }
     private void launchTile(AppObject game) {
         if (managerBinder == null || computer == null) return;
-        Runnable launch = () -> ServerHelper.doStart(this,game.app,computer,managerBinder);
+        Runnable launch = () -> {
+            if(game.app.getAppId()==home.console.virtualAppId&&!Catalog.steamId(game.toString()).isEmpty()){
+                Intent intent=ServerHelper.createStartIntent(this,game.app,computer,managerBinder);
+                intent.putExtra("managedLaunch",java.util.UUID.randomUUID().toString()).putExtra("launchProfile",home.profile);
+                startActivity(intent);
+            }else ServerHelper.doStart(this,game.app,computer,managerBinder);
+        };
         if (lastRunningAppId != 0 && lastRunningAppId != game.app.getAppId()) {
             UiHelper.displayQuitConfirmationDialog(this,launch,null);
         } else launch.run();
     }
 
+    @Override protected void onNewIntent(Intent intent){
+        super.onNewIntent(intent);setIntent(intent);
+        if(intent.getBooleanExtra("afterGame",false)&&home!=null)home.console.web.evaluateJavascript("showHome()",null);
+    }
     @Override public void onBackPressed(){
         if(home!=null && home.console.ready)home.console.web.evaluateJavascript("back()",null);
         else super.onBackPressed();
@@ -468,6 +500,7 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
             if (ambience!=null) { ambience.setLooping(true); setFilmAudio(false);ambience.start(); }
         }
         inForeground = true;
+        home.removeCallbacks(pollBar);home.post(pollBar);
         startComputerUpdates();
     }
 
@@ -478,6 +511,7 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
 
         if(ambience!=null){ambience.release();ambience=null;}
         inForeground = false;
+        home.removeCallbacks(pollBar);
         stopComputerUpdates();
     }
 

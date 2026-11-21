@@ -20,12 +20,17 @@ function controlState(data){
  if(data.covers){let changed=false;for(const g of items){const value=data.covers[g.steamId||g.name];if(typeof value==="boolean"&&g.hasCover!==value){g.hasCover=value;changed=true}}
   if(changed&&page==="store"){const id=document.activeElement?.dataset.id;showStore(id||false)}}
 
+ let stateChanged=false;
  if(data.apps)for(const g of items){
+   const before=g.state;
    if(!g.steamId||g.state==="shortcut")continue;
    g.originalState=g.originalState||g.state;
    const row=data.apps[g.steamId];g.state=row?.state==="installed"?"installed":g.originalState==="installed"?"cached":g.originalState;
-   g.removable=g.state==="installed";
+   g.transfer=row&&["downloading","staging","waiting","paused"].includes(row.state)?row:null;
+   if(g.transfer)g.state="cached";
+   stateChanged=stateChanged||before!==g.state;g.removable=g.state==="installed";
  }
+ if(page==="store"){if(stateChanged&&(filter===1||filter===2))showStore(document.activeElement?.dataset.id||false);else refreshStoreCards()}
  if(page==="manage")drawManage()
 }
 function bytes(n){return n>=1073741824?(n/1073741824).toFixed(1)+" GB":Math.round((n||0)/1048576)+" MB"}
@@ -62,11 +67,11 @@ function drawManage(){
    const extra=Object.values(apps).filter(g=>["downloading","staging","paused","waiting"].includes(g.state)&&!ids.has(g.id));
    if(!list.length&&!extra.length)info("Keine aktiven Downloads","Installationen aus dem Store erscheinen hier.");
    for(const job of [...list,...extra]){
-    const g=apps[job.id]||{},s=({paused:"Von Steam pausiert",staging:"Dateien werden vorbereitet",downloading:"Wird heruntergeladen",waiting:"Wartet auf Steam"})[g.state]||(!job.sent?"In Warteschlange":job.confirmed?"Installation bestätigt · Steam startet den Download":"Installationsdialog wird geprüft");
+    const g=apps[job.id]||{},s=({paused:"Von Steam pausiert",staging:"Dateien werden vorbereitet",downloading:"Wird heruntergeladen",waiting:"Wartet auf Steam"})[g.state]||(job.error||(!job.sent?"In Warteschlange":job.direct?"Installationsauftrag an Steam gesendet":job.confirmed?"Installation bestätigt · Steam startet den Download":"Installationsdialog wird geprüft"));
     const row=info(job.name,s+(g.total>0&&g.state!=="installed"?" · "+bytes(g.done)+" von "+bytes(g.total):""));
     if(g.total>0&&g.state!=="installed"){const meter=document.createElement("progress");meter.max=g.total;meter.value=g.done;row.append(meter)}
     if(job.sentAt && Date.now()/1000-job.sentAt>40 && !controlData.prompt?.id && !["staging","downloading","paused"].includes(g.state)){
-     const note=document.createElement("p");note.textContent="Steam hat noch keinen vom TV bedienbaren Dialog gemeldet.";row.append(note);if(job.action==="install")act("Installation erneut anfordern",()=>native("retry",job.id),row,"retry"+job.id)
+     const note=document.createElement("p");note.textContent=job.direct?"Steam hat den Download noch nicht begonnen. Prüfe den verfügbaren Speicher und die Steam-Verbindung.":"Steam hat noch keinen vom TV bedienbaren Dialog gemeldet.";row.append(note);if(job.action==="install")act("Installation erneut anfordern",()=>native("retry",job.id),row,"retry"+job.id)
     }
     const prompt=controlData.prompt;
     if(prompt?.id===job.id){const t=document.createElement("p");t.textContent=prompt.text;row.append(t);

@@ -102,3 +102,19 @@ Im Menü bewegt der linke Stick den Fokus. OK oder A öffnet die Sucheingabe. Di
 Apollo erzeugt das virtuelle Display beim Streamstart. Dolos-PC ordnet das Spielfenster anhand von Prozess, Monitor und tatsächlicher Pixelposition zu. Für einen dunklen PC-Monitor in Apollo unter Audio/Video die automatische Displaykonfiguration auf „Nur den angegebenen Bildschirm aktivieren“ stellen. Diese Apollo-Einstellung gilt auch für andere Streams desselben Hosts. Das Konsolenmenü läuft auf dem Android-Gerät.
 
 Dolos-PC bereitet Cover, Beschreibungen und Trailer-Adressen im Hintergrund vor. Beim ersten Start wächst der Medienbestand schrittweise. Trailer werden bei der Wiedergabe vom Steam-CDN geladen. Zum Aktualisieren auf anderen PCs die Dateien aus dem PC-Paket übernehmen und die PC-Verwaltung neu starten. Für neue profilspezifische Startparameter den Store einmal mit Administratorrechten aktualisieren.
+
+## Build 330
+
+Dolos-PC startet Installationen mit der von Steam vergebenen Nummer der gewählten Bibliothek. Unter Downloads erscheinen die von Steam gemeldeten Fortschritte. Bei einem ausstehenden Auftrag lässt sich der Auftrag erneut anfordern. Ein bereits gestarteter Download wird dabei beibehalten.
+
+Unter **Controller und Eingabe** lässt sich das Bluetooth-Menü direkt öffnen. **Kopplung beim Start anbieten** steuert den Hinweis für dieses Dolos-Profil. Ohne erkannten Controller kann man den Hinweis mit der Fernbedienung bestätigen.
+
+Unter **Dolos-PC → Einrichtung → Anmeldung einrichten** lässt sich Microsoft Autologon für den Kaltstart öffnen. Die Eingabe und Bestätigung erfolgen lokal im signierten Microsoft-Programm. Für eine Anmeldung nach dem Energiesparmodus gibt es dort einen separaten Zugang zu den Windows-Anmeldeoptionen.
+
+Die obere Systemleiste öffnet WLAN und Bluetooth der Android-Box. In den Controller-Einstellungen sind die gehaltene Spielmenü-Taste und die A/B- sowie X/Y-Zuordnung pro Profil wählbar. Standard ist Start halten. Die Guide-Taste wird im Stream an das Spielsystem weitergereicht, wenn Android sie an Dolos liefert. Im Katalog öffnen L1 und R1 Spiele und Store, L2 und R2 wechseln den Storefilter. In den Einstellungen wechseln L1 und R1 die Kategorie.
+
+Für den direkten Steam-Spielstart einmal **Dolos-PC → Einrichtung → Spielstart aktualisieren** bestätigen. Für Terraria, RimWorld, Arma Reforger und Clair Obscur: Expedition 33 kennt Dolos eigene Startparameter. Im Nebenprofil lässt sich über **Spieloptionen → Speicherpfad für dieses Profil** der Ordner auf dem PC anlegen und anzeigen. Für weitere Spiele mit einem exklusiven lokalen Spielstandordner kann dieser einmal unter **Dolos-PC → Einrichtung → Spielstände** gewählt werden. Vor dem Zuordnen Steam Cloud für diesen Titel ausschalten. Nach dem Start im Nebenprofil ist dessen Ordner aktiv. Nach dem Ende des Steam-Prozesses stellt der laufende Dolos-PC-Dienst den Standardordner wieder her. Während des Wechsels den Titel ausschließlich über Dolos öffnen. Serverseitige Spielstände und über mehrere Orte verteilte Daten benötigen eine spielspezifische Lösung.
+
+Dolos prüft vor einem Download den freien Speicher gegen die bekannten Windows-Depotgrößen. Optionale Inhalte, Sprachen und temporärer Speicher können zusätzlich Platz benötigen. Bei aktiven Downloads zeigt der Store den Fortschritt aus Steam.
+
+Wenn Apollo den Eintrag „Virtual Display“ anbietet, startet der aktuelle Begleitdienst das ausgewählte Steam-Spiel erst nach Aufbau des virtuellen Streams. Auf diesem Weg funktionieren die Profiloptionen auch ohne Austausch der älteren Apollo-Startdatei. Für ältere Apollo-Einträge bleibt „Spielstart aktualisieren“ verfügbar.
