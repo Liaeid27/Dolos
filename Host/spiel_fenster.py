@@ -170,16 +170,21 @@ def close_game(key):
     original=foreground_path(handle)
     if not u.PostMessageW(handle,0x0010,0,0):return False
     def cleanup():
-        if u.IsWindow(handle) or game_window(key,True):return
-        callback=ctypes.WINFUNCTYPE(wt.BOOL,wt.HWND,wt.LPARAM)
-        @callback
-        def visit(hwnd,_):
-            h=wt.HWND(hwnd);owner=wt.DWORD();u.GetWindowThreadProcessId(h,ctypes.byref(owner))
-            if owner.value==pid.value and foreground_path(h)==original:
-                title=ctypes.create_unicode_buffer(256);u.GetWindowTextW(h,title,len(title))
-                if title.value=="D3DProxyWindow":u.PostMessageW(h,0x0010,0,0)
-            return True
-        u.EnumWindows(visit,0)
+        # Several engines destroy their render window but leave Steam tracking a helper.
+        # Ask Steam to stop only this title, and only while the original process still owns its PID.
+        if not key.isascii() or not key.isdecimal() or len(key)>10 or game_window(key,True):return
+        from steam_aktion import running
+        if not running(key):return
+        from ctypes import windll
+        kernel=windll.kernel32
+        process=kernel.OpenProcess(0x1000,False,pid.value)
+        if not process:return
+        try:
+            size=wt.DWORD(32768);name=ctypes.create_unicode_buffer(size.value)
+            if not kernel.QueryFullProcessImageNameW(process,0,name,ctypes.byref(size)) or Path(name.value).resolve()!=original:return
+            import subprocess
+            subprocess.Popen([str(steam_path()/"steam.exe"),"+app_stop",key,"0"],creationflags=subprocess.CREATE_NO_WINDOW)
+        finally:kernel.CloseHandle(process)
     import threading
-    timer=threading.Timer(1.5,cleanup);timer.daemon=True;timer.start()
+    timer=threading.Timer(3,cleanup);timer.daemon=True;timer.start()
     return True

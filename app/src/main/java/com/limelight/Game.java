@@ -1456,8 +1456,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                             if(!ack.optBoolean("accepted") && (http.getCurrentGame(http.getServerInfo(true))==0 || !ControlLink.request(pc,"/foreground/"+screenKey,null,pin,token).optBoolean("running",true))){if(http.getCurrentGame(http.getServerInfo(true))==getIntent().getIntExtra(EXTRA_APP_ID,0))http.quitApp();runOnUiThread(this::returnToLibrary);return;}
                             if(!ack.optBoolean("accepted"))throw new java.io.IOException("Spielfenster nicht erreichbar. Stream über das Kontrollzentrum trennen.");
                             boolean open=true;
-                            for(int i=0;i<10&&open;i++){Thread.sleep(350);open=ControlLink.request(pc,"/foreground/"+screenKey,null,pin,token).optBoolean("visible");}
-                            if(open)throw new java.io.IOException("Das Spiel wartet auf eine Bestätigung. Im Spiel den Beenden-Dialog abschließen.");
+                            for(int i=0;i<36&&open;i++){
+                                Thread.sleep(400);
+                                org.json.JSONObject state=ControlLink.request(pc,"/foreground/"+screenKey,null,pin,token);
+                                open=state.optBoolean("visible")||state.optBoolean("running");
+                            }
+                            if(open)throw new java.io.IOException("Steam meldet das Spiel noch als geöffnet. Im Spiel den Beenden-Dialog prüfen.");
                         }
                         if(http.getCurrentGame(http.getServerInfo(true))==getIntent().getIntExtra(EXTRA_APP_ID,0) && !http.quitApp()) throw new java.io.IOException("Sitzung konnte nicht beendet werden");
                         runOnUiThread(this::returnToLibrary);
