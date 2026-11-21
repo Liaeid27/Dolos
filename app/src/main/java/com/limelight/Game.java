@@ -1391,7 +1391,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             byte[] bytes=java.security.MessageDigest.getInstance("SHA-256").digest(raw.getBytes("UTF-8"));
             StringBuilder b=new StringBuilder();for(int i=0;i<12;i++)b.append(String.format(java.util.Locale.US,"%02x",bytes[i]&255));key=b.toString();
         }catch(Exception ignored){}
-        screenKey=key;final String path="/foreground/"+key,host=getIntent().getStringExtra(EXTRA_HOST);
+        final boolean virtual=getIntent().getBooleanExtra("verifyVirtualDisplay",false);
+        screenKey=key;final String path="/foreground/"+key+(virtual?"?virtual=1":""),host=getIntent().getStringExtra(EXTRA_HOST);
         final android.widget.Button exit=new android.widget.Button(this);exit.setText("Zur Startseite　 ·　 Spielmenü-Taste halten");exit.setAllCaps(false);
         exit.setOnClickListener(v->returnToLibrary());
         FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-2,-2,android.view.Gravity.BOTTOM|android.view.Gravity.CENTER_HORIZONTAL);
@@ -1403,7 +1404,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }catch(Exception e){runOnUiThread(()->ConsoleDock.show(this,e.getMessage(),new String[]{"Zur Startseite"},i->returnToLibrary()));return;}
             boolean previous=false,wasRunning=false;int readySamples=0,closedSamples=0;long prepared=0;
             long waitingSince=android.os.SystemClock.elapsedRealtime();
-            int misses=0; boolean revealed=false;
+            boolean revealed=false;
             while(!stopCurtainMonitor){
                 boolean visible=false;String stage="";
                 try{
@@ -1420,13 +1421,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     }
                     if(!visible&&android.os.SystemClock.elapsedRealtime()-prepared>3000){
                         prepared=android.os.SystemClock.elapsedRealtime();
-                        visible=ControlLink.request(host,"/screen/"+screenKey,new org.json.JSONObject().put("action","prepare"),pin,token).optBoolean("visible");
+                        visible=ControlLink.request(host,"/screen/"+screenKey,new org.json.JSONObject().put("action","prepare").put("virtual",virtual),pin,token).optBoolean("visible");
                     }
                 }catch(Exception ignored){}
                 readySamples=visible?readySamples+1:0;
-                misses=visible?0:misses+1;
                 if(readySamples>=2)revealed=true;
-                else if(misses>=2)revealed=false;
+                else if(!visible)revealed=false;
                 final boolean show=revealed;
                 if(show)waitingSince=android.os.SystemClock.elapsedRealtime();
                 final boolean delayed=!show&&android.os.SystemClock.elapsedRealtime()-waitingSince>22000;
@@ -1481,6 +1481,34 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     @Override
+    public void onBackPressed() {
+        if (connected) showStreamOptions();
+        else super.onBackPressed();
+    }
+
+    private void showStreamOptions() {
+        String[] options={"Fortsetzen","Lautstärke","Stream-Statistik","Stream trennen","Spiel beenden"};
+        ConsoleDock.show(this,options,index->{
+                if(index==1) ((android.media.AudioManager)getSystemService(AUDIO_SERVICE))
+                    .adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,android.media.AudioManager.ADJUST_SAME,android.media.AudioManager.FLAG_SHOW_UI);
+                if(index==2) { prefConfig.enablePerfOverlay=!prefConfig.enablePerfOverlay;
+                    performanceOverlayView.setVisibility(prefConfig.enablePerfOverlay?View.VISIBLE:View.GONE); }
+                if(index==3) finish();
+                if(index==4) endConsoleSession();
+        });
+    }
+
+    private static boolean isRemoteBack(KeyEvent event) {
+        if (event.getKeyCode()!=KeyEvent.KEYCODE_BACK || event.isFromSource(InputDevice.SOURCE_MOUSE)) return false;
+        InputDevice device=event.getDevice();
+        if (device==null || event.isFromSource(InputDevice.SOURCE_DPAD)) return true;
+        int sources=device.getSources();
+        return (sources & InputDevice.SOURCE_JOYSTICK)!=InputDevice.SOURCE_JOYSTICK &&
+                ((sources & InputDevice.SOURCE_GAMEPAD)!=InputDevice.SOURCE_GAMEPAD ||
+                 !event.isFromSource(InputDevice.SOURCE_GAMEPAD) && device.getMotionRange(android.view.MotionEvent.AXIS_X)==null);
+    }
+
+    @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         int key=event.getKeyCode();
         if(connected && event.isFromSource(android.view.InputDevice.SOURCE_GAMEPAD)){
@@ -1492,7 +1520,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         InputDevice inputDevice=event.getDevice();
         boolean fromPad=inputDevice!=null&&((inputDevice.getSources()&InputDevice.SOURCE_GAMEPAD)==InputDevice.SOURCE_GAMEPAD ||
                 (inputDevice.getSources()&InputDevice.SOURCE_JOYSTICK)==InputDevice.SOURCE_JOYSTICK);
-        boolean remoteBack=key==KeyEvent.KEYCODE_BACK && !fromPad;
+        boolean remoteBack=isRemoteBack(event);
         boolean heldStart=false;
         int[] bindings={KeyEvent.KEYCODE_BUTTON_START,KeyEvent.KEYCODE_BUTTON_SELECT,KeyEvent.KEYCODE_BUTTON_THUMBR,KeyEvent.KEYCODE_BUTTON_THUMBL};
         if(connected && key==bindings[ConsoleHome.appearance(this).getInt("menuBinding",0)&3]) {
@@ -1504,16 +1532,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }
         }
         if (connected && (heldStart || remoteBack || (!fromPad && key==KeyEvent.KEYCODE_MENU))) {
-            if (event.getAction()==KeyEvent.ACTION_UP) {
-                String[] options={"Fortsetzen","Lautstärke","Stream-Statistik","Stream trennen","Spiel beenden"};
-                ConsoleDock.show(this,options,index->{
-                        if(index==1) ((android.media.AudioManager)getSystemService(AUDIO_SERVICE))
-                            .adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,android.media.AudioManager.ADJUST_SAME,android.media.AudioManager.FLAG_SHOW_UI);
-                        if(index==2) { prefConfig.enablePerfOverlay=!prefConfig.enablePerfOverlay;
-                            performanceOverlayView.setVisibility(prefConfig.enablePerfOverlay?View.VISIBLE:View.GONE); }
-                        if(index==3) finish();
-                        if(index==4) endConsoleSession();
-                    });
+            if (event.getAction()==KeyEvent.ACTION_UP && !event.isCanceled()) {
+                showStreamOptions();
             }
             return true;
         }
@@ -1527,6 +1547,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public boolean handleKeyDown(KeyEvent event) {
+        if (connected && isRemoteBack(event)) return true;
         // Pass-through virtual navigation keys
         if ((event.getFlags() & KeyEvent.FLAG_VIRTUAL_HARD_KEY) != 0) {
             return false;
@@ -1609,6 +1630,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public boolean handleKeyUp(KeyEvent event) {
+        if (connected && isRemoteBack(event)) {
+            if (!event.isCanceled()) showStreamOptions();
+            return true;
+        }
         // Pass-through virtual navigation keys
         if ((event.getFlags() & KeyEvent.FLAG_VIRTUAL_HARD_KEY) != 0) {
             return false;

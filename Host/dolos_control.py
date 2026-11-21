@@ -303,6 +303,35 @@ def queue_step(apps):
             changed=True
         if changed:write("queue.json",QUEUE)
 
+def hotline_display(prepare=False):
+    from spiel_fenster import capture_monitor,hotline_resolution,hotline_window_file
+    import struct
+    marker=DATA/"hotline-display.json"
+    path=hotline_window_file()
+    if path is None:return
+    if running("274170"):
+        if marker.exists():
+            record=read(marker.name,{})
+            if not record.get("started"):
+                record["started"]=True;write(marker.name,record)
+        return
+    if marker.exists():
+        record=read(marker.name,{})
+        if not prepare and not record.get("started") and time.time()-record["start"]<120:return
+        hotline_resolution(path,record["original"],record["stream"])
+        marker.unlink(missing_ok=True)
+    if not prepare or not path.is_file():return
+    monitor=capture_monitor(require_virtual=True)
+    if not monitor:return
+    rect=monitor.monitor
+    size=(rect.right-rect.left,rect.bottom-rect.top,0,0)
+    data=path.read_bytes()
+    if len(data)!=16:return
+    original=struct.unpack("<4I",data)
+    if original==size:return
+    write(marker.name,dict(original=original,stream=size,start=time.time()))
+    hotline_resolution(path,size,expected=original)
+
 TRANSFER_VIEW_UNTIL=0
 
 def worker():
@@ -312,6 +341,8 @@ def worker():
         try:
             try:restore_idle(seen)
             except (OSError,ValueError,KeyError):pass
+            with LOCK:
+                if (DATA/"hotline-display.json").exists():hotline_display()
             apps=manifests()
             if time.monotonic()<TRANSFER_VIEW_UNTIL:
                 from steam_progress import update
@@ -385,7 +416,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path in ("/status","/status/downloads") and not post:
                 if self.path=="/status/downloads":TRANSFER_VIEW_UNTIL=time.monotonic()+12
-                with LOCK:status=dict(LAST,hostBuild=334,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
+                with LOCK:status=dict(LAST,hostBuild=335,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
                 last=read("last-launch.json",{})
                 if last.get("id") and running(last["id"]):
                     status["activeGame"]={"id":last["id"],"request":last.get("request"),"profile":last.get("profile",0),"name":status.get("apps",{}).get(last["id"],{}).get("name","Spiel")}
@@ -410,7 +441,7 @@ class Handler(BaseHTTPRequestHandler):
                 from spiel_fenster import screen,close_game
                 game=self.path.rsplit("/",1)[1]
                 if req.get("action")=="close":return self.reply(200,{"accepted":close_game(game)})
-                if req.get("action")=="prepare":return self.reply(200,{"visible":screen(game,True)})
+                if req.get("action")=="prepare":return self.reply(200,{"visible":screen(game,True,req.get("virtual") is True)})
                 return self.reply(400,{})
             if self.path=="/end-active" and post:
                 from spiel_fenster import close_game
@@ -444,9 +475,9 @@ class Handler(BaseHTTPRequestHandler):
                     path.mkdir(parents=True,exist_ok=True)
                 return self.reply(200,{"path":str(path)})
             if self.path.startswith("/foreground/") and not post:
-                from spiel_fenster import playing,launch_stage
-                key=self.path.rsplit("/",1)[1]
-                visible=playing(key)
+                from spiel_fenster import screen,launch_stage
+                key,_,query=self.path.rsplit("/",1)[1].partition("?")
+                visible=screen(key,require_virtual=query=="virtual=1")
                 return self.reply(200,{"visible":visible,"stage":"" if visible else launch_stage(key),"running":running(key) if key.isdecimal() and len(key)<=10 else None})
             if post and self.path=="/queue" and req.get("action") in ("downloadfirst","downloadpause","downloadcancel"):
                 ok,error=download_command(str(req.get("id","")),req["action"])
@@ -471,7 +502,10 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply(409,{"error":"Das vorige Spiel zuerst beenden."})
                     if running(key):return self.reply(409,{"error":"Dieses Spiel ist bereits auf dem PC geöffnet."})
                     from steam_aktion import launch_game
-                    try:launch_game(steam_path(),key,profile)
+                    from spiel_fenster import stream_launch_args
+                    try:
+                        if key=="274170":hotline_display(prepare=True)
+                        launch_game(steam_path(),key,profile,stream_launch_args(key))
                     except (ValueError,OSError) as err:return self.reply(409,{"error":str(err)})
                     write("last-launch.json",dict(id=key,profile=profile,request=nonce,time=time.time()))
                     return self.reply(200,{"ok":True})

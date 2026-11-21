@@ -30,3 +30,5 @@ body.art .homeSeal,body[data-page="store"] .homeSeal{display:none}
 .tools #pairPad{width:auto;font-size:.65rem;white-space:nowrap;padding:0 .7rem;border-radius:1.2rem;background:#ffffff14}.tools #pairPad[hidden]{display:none}
 
 #rail{overflow-anchor:none}.tile.current{will-change:auto}
+
+body[data-page="home"] header{position:fixed;inset:0 0 auto;z-index:1}body[data-page="home"] #home{padding-top:12vh} @media(max-aspect-ratio:1/1){body[data-page="home"] #home{padding-top:10vh}}

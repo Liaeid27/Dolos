@@ -52,7 +52,7 @@ class MonitorInfo(ctypes.Structure):
 class MonitorDevice(MonitorInfo):
     _fields_=[("device",wt.WCHAR*32)]
 
-def capture_monitor():
+def capture_monitor(require_virtual=False):
     """Use Apollo's active virtual output, including negative desktop coordinates."""
     import os,re
     log=Path(os.environ["ProgramFiles"])/"Apollo/config/sunshine.log"
@@ -73,7 +73,52 @@ def capture_monitor():
         return True
     ctypes.windll.user32.EnumDisplayMonitors(None,None,visit,0)
     match=next((m for m in monitors if m.device.casefold()==name),None)
-    return match if name else (monitors[0] if len(monitors)==1 else None)
+    return match if name else (monitors[0] if len(monitors)==1 and not require_virtual else None)
+
+def stream_launch_args(key):
+    # The DX9 fullscreen renderer can leave Desktop Duplication showing the desktop.
+    if key=="274170" and capture_monitor(require_virtual=True):
+        return ("-gl",)
+    target=targets_now().get(key)
+    if not target or not target[1] or not (target[0]/"Engine/Binaries").is_dir():
+        return ()
+    if not any(target[0].glob("*/Binaries/Win64/*-Shipping.exe")):
+        return ()
+    user=ctypes.windll.user32
+    dpi=getattr(user,"SetThreadDpiAwarenessContext",None)
+    if dpi:dpi.restype=wt.HANDLE
+    previous=dpi(wt.HANDLE(-4)) if dpi else None
+    try:
+        info=capture_monitor(require_virtual=True)
+        if not info:return ()
+        r=info.monitor
+        return ("-windowed","-ForceRes",f"-ResX={r.right-r.left}",f"-ResY={r.bottom-r.top}",
+                f"-WinX={r.left}",f"-WinY={r.top}")
+    finally:
+        if previous:dpi(wt.HANDLE(previous))
+
+def hotline_resolution(path,size,expected=None):
+    """Apply and conditionally restore the four settings of the known window.dat format."""
+    import struct
+    if not path.is_file() or path.is_symlink():return None
+    data=path.read_bytes()
+    if len(data)!=16:return None
+    original=struct.unpack("<4I",data)
+    if not all(240<=v<=16384 for v in (*original[:2],*size[:2])) or max(*original[2:],*size[2:])>2:return None
+    if expected is not None and list(original)!=list(expected):return None
+    if original!=tuple(size):
+        from tempfile import NamedTemporaryFile
+        with NamedTemporaryFile(dir=path.parent,delete=False) as tmp:
+            name=Path(tmp.name)
+            tmp.write(struct.pack("<4I",*size))
+        try:name.replace(path)
+        finally:name.unlink(missing_ok=True)
+    return original
+
+def hotline_window_file():
+    buf=ctypes.create_unicode_buffer(260)
+    if ctypes.windll.shell32.SHGetFolderPathW(None,5,None,0,buf)!=0:return None
+    return Path(buf.value)/"My Games/HotlineMiami2/window.dat"
 
 def game_window(key,background=False):
     target=targets_now().get(key)
@@ -105,7 +150,7 @@ def game_window(key,background=False):
     u.EnumWindows(visit,0)
     return wt.HWND(max(windows)[1]) if windows else None
 
-def screen(key,prepare=False):
+def screen(key,prepare=False,require_virtual=False):
     u=ctypes.windll.user32
     dpi=getattr(u,"SetThreadDpiAwarenessContext",None)
     if dpi:dpi.restype=wt.HANDLE
@@ -113,15 +158,15 @@ def screen(key,prepare=False):
     try:
         handle=game_window(key,True)
         if not handle:return False
-        info=capture_monitor()
+        info=capture_monitor(require_virtual) if require_virtual else capture_monitor()
         if not info:return False
         m=info.monitor
         if prepare and u.IsIconic(handle):u.ShowWindowAsync(handle,9)
         rect=wt.RECT();origin=wt.POINT()
         if not u.GetClientRect(handle,ctypes.byref(rect)) or not u.ClientToScreen(handle,ctypes.byref(origin)):return False
-        # Overscan and invisible frame borders are common with borderless engines.
-        fits=(origin.x<=m.left+2 and origin.y<=m.top+2 and
-              origin.x+rect.right>=m.right-2 and origin.y+rect.bottom>=m.bottom-2)
+        # A larger game window covers every sample yet the encoder sees only a crop.
+        fits=(abs(origin.x-m.left)<=2 and abs(origin.y-m.top)<=2 and
+              abs(origin.x+rect.right-m.right)<=2 and abs(origin.y+rect.bottom-m.bottom)<=2)
         u.WindowFromPoint.argtypes=[wt.POINT];u.WindowFromPoint.restype=wt.HWND
         u.GetAncestor.argtypes=[wt.HWND,wt.UINT];u.GetAncestor.restype=wt.HWND
         def game_pixel(x,y):
@@ -130,14 +175,22 @@ def screen(key,prepare=False):
         visible=fits and not u.IsIconic(handle) and all(
             game_pixel(m.left+int((m.right-m.left)*x),m.top+int((m.bottom-m.top)*y))
             for x,y in ((.5,.5),(.08,.08),(.92,.08),(.08,.92),(.92,.92)))
-        if visible:return True
+        if visible:
+            focused=game_window(key)
+            if focused and focused.value==handle.value:return True
         if prepare and not u.GetWindow(handle,4):
             style=u.GetWindowLongW(handle,-16)
             if style & 0x40000000:return False
             if not fits:
                 if u.IsZoomed(handle):u.ShowWindow(handle,9)
-                u.SetWindowLongW(handle,-16,ctypes.c_long(style & ~0x00cf0000))
-                u.SetWindowPos(handle,None,m.left,m.top,m.right-m.left,m.bottom-m.top,0x0060)
+                frame=wt.RECT(0,0,m.right-m.left,m.bottom-m.top)
+                exstyle=u.GetWindowLongW(handle,-20)
+                adjust=getattr(u,"AdjustWindowRectExForDpi",None)
+                if adjust and getattr(u,"GetDpiForWindow",None):
+                    adjust(ctypes.byref(frame),style,False,exstyle,u.GetDpiForWindow(handle))
+                else:u.AdjustWindowRectEx(ctypes.byref(frame),style,False,exstyle)
+                u.SetWindowPos(handle,None,m.left+frame.left,m.top+frame.top,
+                               frame.right-frame.left,frame.bottom-frame.top,0x0060)
             u.SetWindowPos(handle,None,0,0,0,0,0x0013)
             u.SetForegroundWindow(handle)
         return False

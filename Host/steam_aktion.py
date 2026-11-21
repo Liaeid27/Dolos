@@ -99,7 +99,7 @@ def restore_idle(seen):
             if now-seen.get(key,json.loads(marker.read_text())["start"]+170)>10:
                 restore_saved(key);seen.pop(key,None)
 
-def launch_game(steam,appid,profile):
+def launch_game(steam,appid,profile,display_args=()):
     import subprocess
     if profile not in range(4) or not appid.isdecimal() or len(appid)>10:raise ValueError("Ungültiger Spielstart.")
     args=[]
@@ -108,7 +108,7 @@ def launch_game(steam,appid,profile):
         if appid not in BUILTIN_PROFILES:raise ValueError("Speicherordner für dieses Spiel einrichten.")
         path=profile_path(appid,profile);path.mkdir(parents=True,exist_ok=True)
         args={"1903340":["-UserDir="+str(path)],"105600":["-savedirectory",str(path)],"294100":["-savedatafolder="+str(path)],"1874880":["-profile",str(path),"-backendLocalStorage"]}[appid]
-    subprocess.Popen([str(steam/"steam.exe"),"-applaunch",appid,*args])
+    subprocess.Popen([str(steam/"steam.exe"),"-applaunch",appid,*args,*display_args])
 
 if __name__=="__main__":
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r"Software\Valve\Steam") as k:
