@@ -59,13 +59,9 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
     private void offerController(){
         if(offeredPairing||isFinishing()||isDestroyed()||!inForeground||!ConsoleDock.isTV(this)||!ConsoleHome.appearance(this).getBoolean("padPrompt",true))return;
         offeredPairing=true;
-        for(int id:android.view.InputDevice.getDeviceIds()){
-            android.view.InputDevice device=android.view.InputDevice.getDevice(id);
-            if(device!=null&&!device.isVirtual()&&device.supportsSource(android.view.InputDevice.SOURCE_GAMEPAD))return;
-        }
-        ConsoleDock.show(this,"Controller verbinden",new String[]{"Mit Fernbedienung fortfahren","Bluetooth-Geräte öffnen"},index->{
-            if(index==1)try{startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));}
-            catch(android.content.ActivityNotFoundException e){startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}
+        if(ControllerPairing.connected()!=null)return;
+        ConsoleDock.show(this,"Controller verbinden",new String[]{"Mit Fernbedienung fortfahren","Controller koppeln"},index->{
+            if(index==1)ControllerPairing.show(this);
         });
     }
     void waitForLibraryArt(){

@@ -102,18 +102,12 @@ final class Catalog {
                 }
             }
         }catch(RuntimeException ignored){label="Netzwerk";}
-        boolean pad=false;
-        for(int i:android.view.InputDevice.getDeviceIds()){
-            android.view.InputDevice d=android.view.InputDevice.getDevice(i);
-            if(d!=null&&!d.isVirtual()&&d.supportsSource(android.view.InputDevice.SOURCE_GAMEPAD)){pad=true;break;}
-        }
+        boolean pad=ControllerPairing.connected()!=null;
         String script="systemBar("+JSONObject.quote(label)+","+bars+","+pad+")";
         if(!barState.equals(script)){barState=script;web.evaluateJavascript(script,null);}
     }
     void applyTheme(){
-        boolean controller=false;for(int device:android.view.InputDevice.getDeviceIds()){
-            android.view.InputDevice d=android.view.InputDevice.getDevice(device);if(d!=null&&!d.isVirtual()&&d.supportsSource(android.view.InputDevice.SOURCE_GAMEPAD)){controller=true;break;}
-        }
+        boolean controller=ControllerPairing.connected()!=null;
         web.evaluateJavascript("window.tvInput="+ConsoleDock.isTV(home.host)+";if(window.tvInput)document.getElementById('pairPad').hidden="+(controller||!ConsoleHome.appearance(home.host).getBoolean("padPrompt",true)),null);
         boolean enhanced="enhanced".equals(ConsoleHome.appearance(home.host).getString("theme","normal"));
         android.content.SharedPreferences settings=ConsoleHome.appearance(home.host);
@@ -187,10 +181,7 @@ final class Catalog {
                     try{home.host.startActivity(new android.content.Intent(android.provider.Settings.ACTION_WIFI_SETTINGS));}
                     catch(android.content.ActivityNotFoundException e){home.host.startActivity(new android.content.Intent(android.provider.Settings.ACTION_SETTINGS));}
                 }
-                else if("bluetooth".equals(action)){
-                    try{home.host.startActivity(new android.content.Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));}
-                    catch(android.content.ActivityNotFoundException e){home.host.startActivity(new android.content.Intent(android.provider.Settings.ACTION_SETTINGS));}
-                }
+                else if("bluetooth".equals(action))ControllerPairing.show(home.host);
                 else if("profile".equals(action))home.chooseProfile();
                 else if("power".equals(action))home.power();
                 else if("quit".equals(action))home.actions.quit();

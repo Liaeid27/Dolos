@@ -73,7 +73,7 @@ public final class SetupGuide extends Activity {
         if(step==0){
             feedback.setText("Teste die Bestätigungstaste oder verwende den Touchscreen.");
             button("Eingabe testen",()->feedback.setText("Eingabe erkannt. Du kannst fortfahren."));
-            button("Bluetooth öffnen",()->{try{startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));}catch(ActivityNotFoundException e){startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}});
+            button("Controller koppeln",()->ControllerPairing.show(this));
             button("Weiter",()->move(1));
         }else if(step==1){
             feedback.setText("Am PC: Dolos-PC → Verbindung öffnen. Sobald „Apollo bereit“ erscheint, lies die Adresse ab.\nHier: Mit demselben Router verbinden. „PC suchen“ wählen oder die Adresse unten eingeben.");

@@ -130,9 +130,7 @@ public class ConsoleStudio extends Activity {
         Uri local=film(this,key,mode);
         switch(action){
             case "close":finish();break;
-            case "bluetooth":
-                try{startActivity(new Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS));}
-                catch(ActivityNotFoundException e){startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}break;
+            case "bluetooth":ControllerPairing.show(this);break;
             case "menuBinding":case "faceLayout":
                 ConsoleHome.appearance(this).edit().putInt(action,(ConsoleHome.appearance(this).getInt(action,0)+1)%4).apply();sync();break;
             case "padPrompt":
