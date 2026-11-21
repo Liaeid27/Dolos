@@ -190,7 +190,7 @@ final class Catalog {
                 else if(Arrays.asList("pair","status","transfers","measure","pause","resume").contains(action))home.link.run(action,"","");
                 else if(Arrays.asList("confirm","cancel","dismiss","retry","downloadfirst","downloadcancel","downloadpause").contains(action))home.link.run(action,u.getLastPathSegment(),"");
                 else if(g!=null && "trophies".equals(action))home.link.run("trophies",steamId(g.toString()),"");
-                else if(g!=null && "savepath".equals(action))home.link.createSavePath(steamId(g.toString()));
+                else if("savepath".equals(action))home.link.createSavePath(u.getLastPathSegment());
                 else if(g!=null && "play".equals(action)){home.link.play(g);}
                 else if(g!=null && ("install".equals(action)||"remove".equals(action))){
                     String id=steamId(g.toString());if(!id.isEmpty()){

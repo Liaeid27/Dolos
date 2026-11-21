@@ -92,7 +92,24 @@ def capture_monitor(require_virtual=False):
 def stream_launch_args(key):
     # The DX9 fullscreen renderer can leave Desktop Duplication showing the desktop.
     if key=="274170" and capture_monitor(require_virtual=True):
+        # Prevent Windows from stretching the legacy SDL render surface at high DPI.
+        import winreg
+        target=targets_now().get(key)
+        if target:
+            exe=target[0]/"HotlineMiami2.exe"
+            if exe.is_file():
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER,r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers") as layers:
+                    try:value=winreg.QueryValueEx(layers,str(exe))[0]
+                    except FileNotFoundError:value="~"
+                    if not any(x.upper() in ("HIGHDPIAWARE","DPIUNAWARE","GDIDPISCALING") for x in value.split()):
+                        winreg.SetValueEx(layers,str(exe),0,winreg.REG_SZ,value+" HIGHDPIAWARE")
         return ("-gl",)
+    if key=="1874880":
+        info=capture_monitor(require_virtual=True)
+        if info:
+            r=info.monitor
+            return ("-window","-screenWidth",str(r.right-r.left),"-screenHeight",str(r.bottom-r.top),
+                    "-posX",str(r.left),"-posY",str(r.top),"-forceUpdate")
     target=targets_now().get(key)
     if not target or not target[1] or not (target[0]/"Engine/Binaries").is_dir():
         return ()
@@ -195,6 +212,11 @@ def screen(key,prepare=False,require_virtual=False):
             if style & 0x40000000:return False
             if not fits:
                 if u.IsZoomed(handle):u.ShowWindow(handle,9)
+                if (key=="1874880" or key=="274170" and m.right-m.left>=3000) and style & 0x00c00000:
+                    # Legacy SDL windows can retain a DPI-scaled minimum frame on UHD displays.
+                    u.SetWindowLongW(handle,-16,ctypes.c_long((style & ~0x00cf0000)|0x80000000))
+                    u.SetWindowPos(handle,None,m.left,m.top,m.right-m.left,m.bottom-m.top,0x0060)
+                    return False
                 outer=wt.RECT()
                 if not u.GetWindowRect(handle,ctypes.byref(outer)):return False
                 u.SetWindowPos(handle,None,m.left+outer.left-origin.x,m.top+outer.top-origin.y,
@@ -237,7 +259,7 @@ def close_game(key):
     def cleanup():
         # Several engines destroy their render window but leave Steam tracking a helper.
         # Ask Steam to stop only this title, and only while the original process still owns its PID.
-        if not key.isascii() or not key.isdecimal() or len(key)>10 or game_window(key,True):return
+        if not key.isascii() or not key.isdecimal() or len(key)>10:return
         from steam_aktion import running
         if not running(key):return
         from ctypes import windll

@@ -14,7 +14,7 @@ final class ConsoleBoot {
         TextView word=new TextView(a); word.setText(title); word.setGravity(Gravity.CENTER);
         word.setTextSize(42); word.setTextColor(-1); word.setLetterSpacing(.18f);
         word.setTypeface(Typeface.create("sans-serif-light",Typeface.NORMAL));
-        layer.addView(word,new FrameLayout.LayoutParams(-1,-1));
+        if(!(a instanceof Game))layer.addView(word,new FrameLayout.LayoutParams(-1,-1));
         a.addContentView(layer,new FrameLayout.LayoutParams(-1,-1));
         word.setAlpha(0); word.setTranslationY(14);
         word.animate().alpha(1).translationY(0).setDuration(450);

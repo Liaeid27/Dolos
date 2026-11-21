@@ -239,10 +239,11 @@ def allowed(key):
     expand(steam_path(),games,owned if owned.is_file() else None)
     return str(key) in games
 
-def steam_dialog(name,mode="inspect",drive=None):
+def steam_dialog(name,mode="inspect",drive=None,expected=None):
     try:
         cmd=["powershell.exe","-NoProfile","-NonInteractive","-File",str(Path(__file__).with_name("DolosDialog.ps1")),
              "-SteamRoot",str(steam_path()),"-Title",name,"-Action",mode]
+        if expected:cmd.extend(["-Expected",expected])
         if drive and mode in ("inspect","install","confirm"):
             cmd=["powershell.exe","-NoProfile","-NonInteractive","-File",str(Path(__file__).with_name("SteamInstall.ps1")),
                  "-SteamRoot",str(steam_path()),"-Title",name,"-Drive",drive]
@@ -416,7 +417,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path in ("/status","/status/downloads") and not post:
                 if self.path=="/status/downloads":TRANSFER_VIEW_UNTIL=time.monotonic()+12
-                with LOCK:status=dict(LAST,hostBuild=338,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
+                with LOCK:status=dict(LAST,hostBuild=339,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
                 last=read("last-launch.json",{})
                 if last.get("id") and running(last["id"]):
                     status["activeGame"]={"id":last["id"],"request":last.get("request"),"profile":last.get("profile",0),"name":status.get("apps",{}).get(last["id"],{}).get("name","Spiel")}
@@ -443,6 +444,13 @@ class Handler(BaseHTTPRequestHandler):
                 if req.get("action")=="close":return self.reply(200,{"accepted":close_game(game)})
                 if req.get("action")=="prepare":return self.reply(200,{"visible":screen(game,True,req.get("virtual") is True)})
                 return self.reply(400,{})
+            if self.path=="/launch-terms" and post:
+                last=read("last-launch.json",{})
+                if not last.get("request") or last.get("request")!=req.get("request"):return self.reply(409,{})
+                title=LAST.get("apps",{}).get(last["id"],{}).get("name")
+                if not title:return self.reply(409,{})
+                expected=req.get("hash")
+                return self.reply(200,steam_dialog(title,"accept" if expected else "terms",expected=expected))
             if self.path=="/end-active" and post:
                 from spiel_fenster import close_game
                 with LOCK:
@@ -508,6 +516,15 @@ class Handler(BaseHTTPRequestHandler):
                         launch_game(steam_path(),key,profile,stream_launch_args(key))
                     except (ValueError,OSError) as err:return self.reply(409,{"error":str(err)})
                     write("last-launch.json",dict(id=key,profile=profile,request=nonce,time=time.time()))
+                    title=LAST["apps"][key].get("name")
+                    if title:
+                        def confirm_start():
+                            from spiel_fenster import game_window
+                            for delay in (2,4,8,12):
+                                time.sleep(delay)
+                                if read("last-launch.json",{}).get("request")!=nonce or game_window(key,True):return
+                                if steam_dialog(title,"launch").get("confirmed"):return
+                        threading.Thread(target=confirm_start,daemon=True).start()
                     return self.reply(200,{"ok":True})
                 if self.path=="/select" and post:
                     key=str(req.get("id",""))

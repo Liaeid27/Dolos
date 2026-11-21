@@ -113,7 +113,7 @@ function showHome(){
  for(const g of [storeTile,...items.filter(x=>x.pinned)]){
    const b=document.createElement("button");b.className="tile";b.setAttribute("aria-label",g.name);
    if(g.id)art(b,g);else{b.classList.add("bag");b.innerHTML=svg("bag")}
-   b.dataset.id=g.id;b.oncontextmenu=e=>{e.preventDefault();if(g.id)openGameOptions(items.find(i=>i.id===g.id)||g)};b.onpointerenter=e=>{if(e.pointerType==="mouse"&&page==="home"&&$("#gameOptions").hidden&&$("#center").hidden)b.focus({preventScroll:true})};b.onfocus=()=>selectGame(g,b);b.onclick=()=>{selectGame(g,b);playCurrent()};rail.append(b);if(g.id===selection)focus=b
+   b.dataset.id=g.id;b.oncontextmenu=e=>{e.preventDefault();if(g.id)openGameOptions(items.find(i=>i.id===g.id)||g)};b.onfocus=()=>selectGame(g,b);b.onclick=()=>{selectGame(g,b);playCurrent()};rail.append(b);if(String(g.id)===String(selection))focus=b
  }
  focus=focus||rail.firstChild;focus.focus({preventScroll:true});if(focus!==rail.firstChild)focus.scrollIntoView({block:"nearest",inline:"nearest"});else{rail.scrollLeft=0;rail.scrollTop=0;}if(!focus.classList.contains("current"))selectGame(current(),focus)
 }
@@ -205,7 +205,9 @@ window.loadCatalog=(rows,profile,enableSound,scope="")=>{
  familyLink=rows.find(g=>g.name==="Steam Big Picture"&&g.state==="host");
 
  for(const g of rows){const cover=typeof controlData!=="undefined"?controlData.covers?.[g.steamId||g.name]:undefined;if(typeof cover==="boolean")g.hasCover=cover}
+ const priorGame=items.find(x=>x.id===selection);
  items=rows.filter(g=>!(g.state==="host"&&["Steam Big Picture","Desktop","Virtual Display"].includes(g.name)));
+ if(!changed&&priorGame?.steamId&&!items.some(x=>x.id===selection&&x.pinned))selection=items.find(x=>x.pinned&&x.steamId===priorGame.steamId)?.id||"";
  const shelf=[storeTile,...items.filter(g=>g.pinned)];
  const tiles=[...$("#rail").children];
  if(initialized&&!changed&&page==="home"&&shelf.length===tiles.length&&shelf.every((g,i)=>g.id===tiles[i].dataset.id&&g.name===tiles[i].getAttribute("aria-label"))){

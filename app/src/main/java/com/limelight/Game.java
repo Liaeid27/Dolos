@@ -1376,7 +1376,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private String screenKey="";
     private void setGamePictureVisible(boolean visible) {
         // Leave the decoder surface in place during window transitions.
-        launchCurtain.setVisibility(visible ? View.GONE : View.VISIBLE);
+        if(!visible){
+            launchCurtain.animate().cancel();launchCurtain.setAlpha(1f);launchCurtain.setVisibility(View.VISIBLE);
+        }else if(launchCurtain.getVisibility()==View.VISIBLE){
+            launchCurtain.animate().alpha(0f).setDuration(180).withEndAction(()->launchCurtain.setVisibility(View.GONE)).start();
+        }
     }
     private void guardGameDisplay() {
         android.content.SharedPreferences prefs=getSharedPreferences("dolos-control-"+getIntent().getStringExtra(EXTRA_PC_UUID),MODE_PRIVATE);
@@ -1397,9 +1401,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         final android.widget.Button exit=new android.widget.Button(this);exit.setText("Zur Startseite　 ·　 Spielmenü-Taste halten");exit.setAllCaps(false);
         exit.setOnClickListener(v->{
             if (Boolean.TRUE.equals(exit.getTag())) {
-                ConsoleDock.show(this,"Spielbild prüfen",new String[]{"Weiter warten","Stream direkt ansehen (Desktop möglich)","Zur Startseite"},i->{
-                    if(i==1){manualPicture=true;setGamePictureVisible(true);streamView.requestFocus();}
-                    else if(i==2)returnToLibrary();
+                ConsoleDock.show(this,"Spielbild prüfen",new String[]{"Weiter warten","Steam-Nutzungsbedingungen prüfen","Stream direkt ansehen (Desktop möglich)","Zur Startseite"},i->{
+                    if(i==1){checkLaunchTerms(host,pin,token);}
+                    else if(i==2){manualPicture=true;setGamePictureVisible(true);streamView.requestFocus();}
+                    else if(i==3)returnToLibrary();
                 });
             } else returnToLibrary();
         });
@@ -1442,8 +1447,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 final boolean changed=previous!=visible;runOnUiThread(()->{
                     if(stopCurtainMonitor||isFinishing())return;
                     if(delayed&&!launchStage.isEmpty())exit.setText(launchStage+"　 ·　 Zur Startseite");
-                    else if(delayed)exit.setText(gameRunning?"Spiel läuft · Warte auf das Bild am Stream-Display　 ·　 Zur Startseite":"Warte auf das Spielfenster　 ·　 Zur Startseite");
-                    exit.setTag(delayed && gameRunning);
+                    else if(delayed)exit.setText(gameRunning?"Spiel läuft · Warte auf das Bild am Stream-Display　 ·　 Zur Startseite":"Warte auf das Spielfenster　 ·　 Startdialog prüfen");
+                    exit.setTag(delayed);
                     if(delayed && gameRunning)exit.setText("Spiel läuft · Bildoptionen öffnen");
                     if(show)manualPicture=false;
                     if(manualPicture)return;
@@ -1458,9 +1463,27 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         },"Dolos-Game-Focus").start();
     }
 
+    private void checkLaunchTerms(String host,String pin,String token){
+        new Thread(()->{try{
+            org.json.JSONObject body=new org.json.JSONObject().put("request",getIntent().getStringExtra("managedLaunch"));
+            org.json.JSONObject result=ControlLink.request(host,"/launch-terms",body,pin,token);
+            runOnUiThread(()->{
+                if(isFinishing())return;
+                if(!result.has("text")){ConsoleDock.show(this,"Kein lesbarer Steam-Lizenzdialog gefunden",new String[]{"Zurück"},i->{});return;}
+                android.widget.TextView detail=new android.widget.TextView(this);detail.setText(result.optString("text"));
+                ConsoleDock.panel(this,"Nutzungsbedingungen",detail,new String[]{"Zurück","Zustimmen"},i->{
+                    if(i==1)new Thread(()->{try{
+                        if(!ControlLink.request(host,"/launch-terms",body.put("hash",result.getString("hash")),pin,token).optBoolean("confirmed"))throw new java.io.IOException();
+                    }catch(Exception e){runOnUiThread(()->Toast.makeText(this,"Steam hat die Zustimmung nicht bestätigt.",Toast.LENGTH_LONG).show());}}).start();
+                },-1);
+            });
+        }catch(Exception e){runOnUiThread(()->Toast.makeText(this,"Steam-Dialog derzeit nicht erreichbar.",Toast.LENGTH_LONG).show());}}).start();
+    }
+
     private void endConsoleSession() {
         ConsoleDock.show(this,"Spiel verlassen?",new String[]{"Weiterspielen","Spiel beenden"},which->{
                 if(which==0)return;
+                manualPicture=false;setGamePictureVisible(false);
                 Intent launch=getIntent();
                 new Thread(()->{
                     try {
