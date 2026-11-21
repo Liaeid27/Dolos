@@ -221,6 +221,19 @@ document.addEventListener("keydown",e=>{
  if(e.key==="ContextMenu"){e.preventDefault();gameOptionsForFocus();return}
  const dir={ArrowRight:[1,0],ArrowLeft:[-1,0],ArrowDown:[0,1],ArrowUp:[0,-1]}[e.key];if(!dir||e.target===$("#search")&&dir[0])return;
  const active=document.activeElement;
+ if(page==="home"&&$("#center").hidden&&$("#gameOptions").hidden){
+  const buttons=[...document.querySelectorAll("header button")].filter(b=>b.offsetWidth);
+  const idx=buttons.indexOf(active);
+  if(idx>=0){
+   e.preventDefault();
+   if(dir[0]) buttons[Math.max(0,Math.min(buttons.length-1,idx+dir[0]))].focus({preventScroll:true});
+   else if(dir[1]>0) ($("#rail .current")||$("#rail button"))?.focus({preventScroll:true});
+   return;
+  }
+  if(active.parentElement===$("#rail")&&dir[1]<0&&(!document.body.classList.contains("enhanced")||!active.previousElementSibling||innerWidth<innerHeight)){
+   e.preventDefault();buttons[0]?.focus({preventScroll:true});return;
+  }
+ }
  if(page==="manage"&&managePage==="Downloads"&&$("#gameOptions").hidden&&$("#center").hidden&&dir[1]){
   const row=active.closest("#manager section");
   if(row){let target=dir[1]>0?row.nextElementSibling:row.previousElementSibling;

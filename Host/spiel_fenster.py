@@ -165,8 +165,8 @@ def screen(key,prepare=False,require_virtual=False):
         rect=wt.RECT();origin=wt.POINT()
         if not u.GetClientRect(handle,ctypes.byref(rect)) or not u.ClientToScreen(handle,ctypes.byref(origin)):return False
         # A larger game window covers every sample yet the encoder sees only a crop.
-        fits=(abs(origin.x-m.left)<=2 and abs(origin.y-m.top)<=2 and
-              abs(origin.x+rect.right-m.right)<=2 and abs(origin.y+rect.bottom-m.bottom)<=2)
+        fits=(abs(origin.x-m.left)<=8 and abs(origin.y-m.top)<=8 and
+              abs(origin.x+rect.right-m.right)<=8 and abs(origin.y+rect.bottom-m.bottom)<=8)
         u.WindowFromPoint.argtypes=[wt.POINT];u.WindowFromPoint.restype=wt.HWND
         u.GetAncestor.argtypes=[wt.HWND,wt.UINT];u.GetAncestor.restype=wt.HWND
         def game_pixel(x,y):
@@ -175,9 +175,7 @@ def screen(key,prepare=False,require_virtual=False):
         visible=fits and not u.IsIconic(handle) and all(
             game_pixel(m.left+int((m.right-m.left)*x),m.top+int((m.bottom-m.top)*y))
             for x,y in ((.5,.5),(.08,.08),(.92,.08),(.08,.92),(.92,.92)))
-        if visible:
-            focused=game_window(key)
-            if focused and focused.value==handle.value:return True
+        if visible:return True
         if prepare and not u.GetWindow(handle,4):
             style=u.GetWindowLongW(handle,-16)
             if style & 0x40000000:return False

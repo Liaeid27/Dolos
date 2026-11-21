@@ -1372,6 +1372,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         home.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(home);overridePendingTransition(0,0);finish();
     }
+    private boolean manualPicture;
     private String screenKey="";
     private void setGamePictureVisible(boolean visible) {
         // Leave the decoder surface in place during window transitions.
@@ -1394,7 +1395,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         final boolean virtual=getIntent().getBooleanExtra("verifyVirtualDisplay",false);
         screenKey=key;final String path="/foreground/"+key+(virtual?"?virtual=1":""),host=getIntent().getStringExtra(EXTRA_HOST);
         final android.widget.Button exit=new android.widget.Button(this);exit.setText("Zur Startseite　 ·　 Spielmenü-Taste halten");exit.setAllCaps(false);
-        exit.setOnClickListener(v->returnToLibrary());
+        exit.setOnClickListener(v->{
+            if (Boolean.TRUE.equals(exit.getTag())) {
+                ConsoleDock.show(this,"Spielbild prüfen",new String[]{"Weiter warten","Stream direkt ansehen (Desktop möglich)","Zur Startseite"},i->{
+                    if(i==1){manualPicture=true;setGamePictureVisible(true);streamView.requestFocus();}
+                    else if(i==2)returnToLibrary();
+                });
+            } else returnToLibrary();
+        });
         FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-2,-2,android.view.Gravity.BOTTOM|android.view.Gravity.CENTER_HORIZONTAL);
         lp.bottomMargin=(int)(24*getResources().getDisplayMetrics().density);launchCurtain.addView(exit,lp);
         new Thread(()->{
@@ -1435,6 +1443,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     if(stopCurtainMonitor||isFinishing())return;
                     if(delayed&&!launchStage.isEmpty())exit.setText(launchStage+"　 ·　 Zur Startseite");
                     else if(delayed)exit.setText(gameRunning?"Spiel läuft · Warte auf das Bild am Stream-Display　 ·　 Zur Startseite":"Warte auf das Spielfenster　 ·　 Zur Startseite");
+                    exit.setTag(delayed && gameRunning);
+                    if(delayed && gameRunning)exit.setText("Spiel läuft · Bildoptionen öffnen");
+                    if(show)manualPicture=false;
+                    if(manualPicture)return;
                     boolean covered=launchCurtain.getVisibility()==View.VISIBLE;
                     setGamePictureVisible(show);
                     if(show){if(changed||covered)streamView.requestFocus();}

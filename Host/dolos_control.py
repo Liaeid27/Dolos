@@ -416,7 +416,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path in ("/status","/status/downloads") and not post:
                 if self.path=="/status/downloads":TRANSFER_VIEW_UNTIL=time.monotonic()+12
-                with LOCK:status=dict(LAST,hostBuild=336,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
+                with LOCK:status=dict(LAST,hostBuild=337,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
                 last=read("last-launch.json",{})
                 if last.get("id") and running(last["id"]):
                     status["activeGame"]={"id":last["id"],"request":last.get("request"),"profile":last.get("profile",0),"name":status.get("apps",{}).get(last["id"],{}).get("name","Spiel")}
