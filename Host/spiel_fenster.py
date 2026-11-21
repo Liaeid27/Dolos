@@ -57,12 +57,19 @@ def capture_monitor(require_virtual=False):
     import os,re
     log=Path(os.environ["ProgramFiles"])/"Apollo/config/sunshine.log"
     name=None
+    capture=None
     try:
         with log.open("rb") as stream:
             stream.seek(max(0,stream.seek(0,2)-1048576))
             data=stream.read().replace(b"\0",b"").decode("utf8","ignore")
         events=re.findall(r"Virtual Display (?:created at ([^\r\n]+)|removed successfully)",data)
         if events:name=events[-1].strip().casefold()
+        # A long session can outlive the creation line in the log tail.
+        # Apollo reports offsets relative to the virtual desktop origin.
+        if not events and "Session resuming for app [Virtual Display]" in data:
+            section=data.rsplit("Session resuming for app [Virtual Display]",1)[1]
+            regions=re.findall(r"Capture size\s*:\s*(\d+)x(\d+)\s+Offset\s*:\s*(-?\d+)x(-?\d+)",section)
+            if regions:capture=tuple(map(int,regions[-1]))
     except OSError:pass
     monitors=[]
     callback=ctypes.WINFUNCTYPE(wt.BOOL,wt.HANDLE,wt.HDC,ctypes.POINTER(wt.RECT),wt.LPARAM)
@@ -73,6 +80,13 @@ def capture_monitor(require_virtual=False):
         return True
     ctypes.windll.user32.EnumDisplayMonitors(None,None,visit,0)
     match=next((m for m in monitors if m.device.casefold()==name),None)
+    if not name and capture and len(monitors)>1:
+        width,height,x,y=capture
+        left=min(m.monitor.left for m in monitors)+x
+        top=min(m.monitor.top for m in monitors)+y
+        candidates=[m for m in monitors if not m.flags&1 and
+                    (m.monitor.left,m.monitor.top,m.monitor.right,m.monitor.bottom)==(left,top,left+width,top+height)]
+        if len(candidates)==1:return candidates[0]
     return match if name else (monitors[0] if len(monitors)==1 and not require_virtual else None)
 
 def stream_launch_args(key):
@@ -144,7 +158,7 @@ def game_window(key,background=False):
     @callback
     def visit(hwnd,param):
         h=wt.HWND(hwnd);rect=wt.RECT()
-        if u.IsWindowVisible(h) and not u.GetWindow(h,4) and u.GetClientRect(h,ctypes.byref(rect)) and matches(hwnd):
+        if u.IsWindowVisible(h) and u.GetClientRect(h,ctypes.byref(rect)) and matches(hwnd):
             windows.append((rect.right*rect.bottom,hwnd))
         return True
     u.EnumWindows(visit,0)
@@ -176,7 +190,7 @@ def screen(key,prepare=False,require_virtual=False):
             game_pixel(m.left+int((m.right-m.left)*x),m.top+int((m.bottom-m.top)*y))
             for x,y in ((.5,.5),(.08,.08),(.92,.08),(.08,.92),(.92,.92)))
         if visible:return True
-        if prepare and not u.GetWindow(handle,4):
+        if prepare:
             style=u.GetWindowLongW(handle,-16)
             if style & 0x40000000:return False
             if not fits:
