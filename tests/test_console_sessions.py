@@ -76,6 +76,19 @@ class ConsoleSessionTests(unittest.TestCase):
             with patch.object(host.time, "time", return_value=last["time"] + 46):
                 self.assertFalse(host.launch_pending(last))
 
+    def test_finished_session_cannot_stop_a_later_desktop_launch(self):
+        last = dict(id="123", request="first", time=time.time()-60, observed=True, ending=True)
+        with patch.object(host, "running") as running, patch.object(display, "game_window", return_value=None), \
+                patch.object(host, "end_managed_game") as stop:
+            running.return_value = False
+            host.watch_managed_game(last)
+            with patch.object(host.time, "time", return_value=last["goneSince"]+5):
+                host.watch_managed_game(last)
+            self.assertTrue(last["closed"])
+            running.return_value = True
+            host.watch_managed_game(last)
+            stop.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

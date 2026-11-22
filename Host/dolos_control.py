@@ -314,7 +314,7 @@ def queue_step(apps):
         if changed:write("queue.json",QUEUE)
 
 def launch_pending(last):
-    return bool(last and not last.get("observed") and
+    return bool(last and not last.get("closed") and not last.get("observed") and
                 (time.time()-last["time"]<45 or LAUNCH_TERMS.get(last.get("request"))))
 
 def end_managed_game(last):
@@ -331,6 +331,27 @@ def end_managed_game(last):
                              creationflags=subprocess.CREATE_NO_WINDOW)
         last["endTime"]=time.time()
     last["ending"]=True
+    write("last-launch.json",last)
+
+def watch_managed_game(last):
+    if not last.get("id") or last.get("closed"):return
+    if running(last["id"]):
+        if last.get("observed") and "goneSince" not in last:return
+        cancelled_start=last.get("ending") and launch_pending(last)
+        last["observed"]=True
+        last.pop("goneSince",None)
+        if cancelled_start:
+            last.pop("endTime",None)
+            end_managed_game(last)
+        else:write("last-launch.json",last)
+        return
+    if not last.get("observed") and (launch_pending(last) or not last.get("ending") and time.time()-last["time"]<180):return
+    from spiel_fenster import game_window
+    if game_window(last["id"],True):return
+    now=time.time()
+    if "goneSince" not in last:last["goneSince"]=now
+    elif now-last["goneSince"]<4:return
+    else:last["closed"]=True
     write("last-launch.json",last)
 
 def acc_gamepad(prepare=False):
@@ -413,12 +434,7 @@ def worker():
             except (OSError,ValueError,KeyError):pass
             with LOCK:
                 last=read("last-launch.json",{})
-                if last.get("id") and not last.get("observed") and running(last["id"]):
-                    last["observed"]=True
-                    if last.get("ending"):
-                        last.pop("endTime",None)
-                        end_managed_game(last)
-                    else:write("last-launch.json",last)
+                watch_managed_game(last)
                 if (DATA/"hotline-display.json").exists():hotline_display()
                 if (DATA/"acc-gamepad.json").exists():acc_gamepad()
             apps=manifests()
@@ -496,7 +512,7 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path=="/status/downloads":TRANSFER_VIEW_UNTIL=time.monotonic()+12
                 with LOCK:status=dict(LAST,hostBuild=340,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
                 last=read("last-launch.json",{})
-                if last.get("id") and (running(last["id"]) or launch_pending(last) and not last.get("ending")):
+                if last.get("id") and not last.get("closed") and (running(last["id"]) or launch_pending(last) and not last.get("ending")):
                     status["activeGame"]={"id":last["id"],"request":last.get("request"),"profile":last.get("profile",0),"name":status.get("apps",{}).get(last["id"],{}).get("name","Spiel")}
                 return self.reply(200,status)
             if self.path=="/catalog-media" and not post:return self.reply(200,MEDIA.copy())
@@ -523,6 +539,7 @@ class Handler(BaseHTTPRequestHandler):
                     last=read("last-launch.json",{})
                     if session and (last.get("request")!=session or last.get("id")!=game):
                         return self.reply(200,{"replaced":True})
+                    if session and last.get("closed"):return self.reply(200,{"accepted":True,"visible":False})
                     if req.get("action")=="close":
                         if session:
                             end_managed_game(last)
@@ -540,14 +557,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(400,{})
             if self.path=="/launch-terms" and post:
                 last=read("last-launch.json",{})
-                if not last.get("request") or last.get("request")!=req.get("request") or last.get("ending"):return self.reply(409,{})
+                if not last.get("request") or last.get("request")!=req.get("request") or last.get("ending") or last.get("closed"):return self.reply(409,{})
                 title=LAST.get("apps",{}).get(last["id"],{}).get("name")
                 if not title:return self.reply(409,{})
                 expected=req.get("hash")
                 if expected:
                     with LOCK:
                         current=read("last-launch.json",{})
-                        if current.get("request")!=last["request"] or current.get("ending"):return self.reply(409,{})
+                        if current.get("request")!=last["request"] or current.get("ending") or current.get("closed"):return self.reply(409,{})
                         return self.reply(200,steam_dialog(title,"accept",expected=expected))
                 return self.reply(200,steam_dialog(title,"terms"))
             if self.path=="/end-active" and post:
@@ -556,7 +573,7 @@ class Handler(BaseHTTPRequestHandler):
                     last=read("last-launch.json",{})
                     if not last or last.get("id")!=req.get("id") or last.get("request")!=req.get("request"):
                         return self.reply(409,{"error":"Die aktive Spielsitzung hat sich geändert."})
-                    end_managed_game(last)
+                    if not last.get("closed"):end_managed_game(last)
                     return self.reply(200,{"ok":True})
             if self.path=="/save-candidates" and post:
                 key=str(req.get("id",""))
@@ -591,7 +608,8 @@ class Handler(BaseHTTPRequestHandler):
                 with LOCK:
                     last=read("last-launch.json",{})
                     if session and (session!=last.get("request") or key!=last.get("id")):return self.reply(200,{"replaced":True})
-                    if (visible or steam_running) and last.get("id")==key and not last.get("observed") and not last.get("ending"):
+                    if session and last.get("closed"):return self.reply(200,{"visible":False,"running":False,"closed":True})
+                    if (visible or steam_running) and last.get("id")==key and not last.get("observed") and not last.get("ending") and not last.get("closed"):
                         last["observed"]=True;write("last-launch.json",last)
                     pending_stop=bool(session and last.get("ending") and launch_pending(last))
                 return self.reply(200,{"visible":visible,"pendingStop":pending_stop,"terms":LAUNCH_TERMS.get(session) if session and not visible else None,"stage":"" if visible else launch_stage(key),"running":steam_running})
@@ -612,7 +630,7 @@ class Handler(BaseHTTPRequestHandler):
                     if LAST.get("apps",{}).get(key,{}).get("state")!="installed" or not key.isdecimal() or len(key)>10 or type(profile)!=int or profile not in range(4) or not isinstance(nonce,str) or len(nonce)!=36:
                         return self.reply(409,{"error":"Spiel noch nicht bereit."})
                     last=read("last-launch.json",{})
-                    if last and (running(last["id"]) or launch_pending(last)):
+                    if last and not last.get("closed") and (running(last["id"]) or launch_pending(last)):
                         if not last.get("ending") and last["id"]==key and last["profile"]==profile:return self.reply(200,{"ok":True,"session":last.get("request")})
                         if last.get("ending"):return self.reply(409,{"error":"Steam beendet den vorigen Spielstart. Versuche es in einem Moment erneut."})
                         return self.reply(409,{"error":"Das vorige Spiel zuerst beenden."})

@@ -1444,7 +1444,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     }
                     if(state.optBoolean("running"))wasRunning=true;
                     if(wasRunning&&!visible&&state.has("running")&&!state.isNull("running")&&!state.optBoolean("running"))closedSamples++;else closedSamples=0;
-                    if(closedSamples>=4 && !closingGame){
+                    if((closedSamples>=4 || state.optBoolean("closed")) && !closingGame){
                         stopCurtainMonitor=true;
                         try{NvHTTP session=new NvHTTP(new ComputerDetails.AddressTuple(host,getIntent().getIntExtra(EXTRA_PORT,NvHTTP.DEFAULT_HTTP_PORT)),getIntent().getIntExtra(EXTRA_HTTPS_PORT,0),getIntent().getStringExtra(EXTRA_UNIQUEID),consoleHostCert,PlatformBinding.getCryptoProvider(this));
                             if(session.getCurrentGame(session.getServerInfo(true))==getIntent().getIntExtra(EXTRA_APP_ID,0))session.quitApp();
