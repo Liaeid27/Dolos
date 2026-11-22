@@ -119,6 +119,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private LinkedBlockingQueue<Integer> outputBufferQueue = new LinkedBlockingQueue<>();
     private static final int OUTPUT_BUFFER_QUEUE_LIMIT = 2;
     private long lastRenderedFrameTimeNanos;
+    // Updated only after a successful render release, including balanced frame pacing.
+    private volatile long framesSentToSurface;
+
+    public long getFramesSentToSurface() {
+        return framesSentToSurface;
+    }
     private HandlerThread choreographerHandlerThread;
     private Handler choreographerHandler;
 
@@ -1003,6 +1009,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                     }
 
                     lastRenderedFrameTimeNanos = frameTimeNanos;
+                    framesSentToSurface++;
                     activeWindowVideoStats.totalFramesRendered++;
                 } catch (IllegalStateException ignored) {
                     try {
@@ -1095,6 +1102,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                     }
                                 }
 
+                                framesSentToSurface++;
                                 activeWindowVideoStats.totalFramesRendered++;
                             }
                             else {

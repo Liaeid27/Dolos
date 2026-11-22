@@ -102,7 +102,7 @@ public final class SetupGuide extends Activity {
             if(control().contains("token"))button("Gespeicherte Verbindung prüfen",()->network(this::verifyControl));
         }else{
             feedback.setText(pc==null?"Der Spiel-PC ist noch offen. Du kannst die Einrichtung später fortsetzen.":"Spiel-PC verbunden: "+pc.name);
-            for(String[] x:new String[][]{{"wake","PC beim Öffnen wecken"},{"sound","Systemklänge"},{"music","Menümusik"}}){
+            for(String[] x:new String[][]{{"wake","PC mit dem Startfilm wecken"},{"sound","Systemklänge"},{"music","Menümusik"}}){
                 SharedPreferences options="wake".equals(x[0])?prefs:com.limelight.preferences.ProfileSettings.group(this,"console");CheckBox c=new CheckBox(this);c.setTextColor(-1);c.setText(x[1]);c.setChecked(options.getBoolean(x[0],true));c.setOnCheckedChangeListener((v,on)->options.edit().putBoolean(x[0],on).apply());page.addView(c);
             }
             if(BuildConfig.REMOTE_BUILD){

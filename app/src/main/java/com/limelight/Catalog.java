@@ -32,30 +32,34 @@ final class Catalog {
     int liveAppId;
     boolean liveRunning;
     JSONArray liveRows=new JSONArray();
-    final Map<String,AppView.AppObject> entries=new java.util.concurrent.ConcurrentHashMap<>();
-    final Map<String,AppView.AppObject> removers=new HashMap<>();
+    private volatile Map<String,AppView.AppObject> entries=Collections.emptyMap();
+    private static final Pattern REMOVE_TAG=Pattern.compile("\\[AC-REMOVE:([0-9]+)\\]");
     void update(){
         if(!ready)return;
-        entries.clear();removers.clear();virtualAppId=0;liveAppId=0;liveRunning=false;Set<String> seen=new HashSet<>();
+        Map<String,AppView.AppObject> nextEntries=new HashMap<>();
+        Set<String> removers=new HashSet<>(),seen=new HashSet<>();
+        virtualAppId=0;liveAppId=0;liveRunning=false;
         JSONArray data=new JSONArray();
         String uuid=home.host.getIntent().getStringExtra(AppView.UUID_EXTRA);
         Set<String> hidden=home.hiddenTiles(),pinned=home.extraPins();
         for(int i=0;home.library!=null && i<home.library.getCount();i++){
             AppView.AppObject g=(AppView.AppObject)home.library.getItem(i);
-            if(g.toString().matches("\\[AC-REMOVE:[0-9]+\\]"))removers.put(g.toString().substring(11,g.toString().length()-1),g);
+            Matcher remove=REMOVE_TAG.matcher(g.toString());
+            if(remove.matches())removers.add(remove.group(1));
         }
         for(int i=0;home.library!=null && i<home.library.getCount();i++){
             AppView.AppObject g=(AppView.AppObject)home.library.getItem(i);
             if("Virtual Display".equalsIgnoreCase(g.toString()))virtualAppId=g.app.getAppId();
             if("[Dolos Live]".equals(g.toString())){liveAppId=g.app.getAppId();liveRunning=g.isRunning;continue;}
             if(!home.belongsToProfile(g)) continue;
-            seen.add(steamId(g.toString()));
+            String sid=steamId(g.toString());
+            seen.add(sid);
             String id=String.valueOf(g.app.getAppId());
-            entries.put(id,g);
+            nextEntries.put(id,g);
             try {
                 JSONObject row=new JSONObject();
-                row.put("running",g.isRunning);row.put("steamId",steamId(g.toString()));row.put("id",id);row.put("name",home.displayName(g));row.put("state",state(g.toString()));
-                row.put("removable",removers.containsKey(steamId(g.toString())));row.put("pinned",home.onShelf(g,hidden,pinned));row.put("art",ORIGIN+"art/"+id);
+                row.put("running",g.isRunning);row.put("steamId",sid);row.put("id",id);row.put("name",home.displayName(g));row.put("state",state(g.toString()));
+                row.put("removable",removers.contains(sid));row.put("pinned",home.onShelf(g,hidden,pinned));row.put("art",ORIGIN+"art/"+id);
                 data.put(row);
             } catch(JSONException e){throw new IllegalStateException(e);}
         }
@@ -64,11 +68,12 @@ final class Catalog {
             if(!sid.matches("[0-9]{1,10}")||!seen.add(sid)||!Arrays.asList("installed","cached","owned","family").contains(state))continue;
             String id="s"+sid,name=r.getString("name");
             AppView.AppObject g=new AppView.AppObject(new com.limelight.nvstream.http.NvApp(name+" [AC:"+sid+":"+state+"]",liveAppId,false));
-            entries.put(id,g);
+            nextEntries.put(id,g);
             data.put(new JSONObject().put("id",id).put("name",name).put("steamId",sid).put("state",state)
                 .put("art","https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/"+sid+"/library_600x900.jpg")
                 .put("pinned",home.onShelf(g,hidden,pinned)).put("removable",state.equals("installed")));
         }catch(JSONException ignored){}
+        entries=nextEntries;
         android.content.SharedPreferences history=home.host.getSharedPreferences("dolos-history."+uuid+"."+home.profile,0);
         for(int i=0;i<data.length();i++)try{
             JSONObject row=data.getJSONObject(i);String sid=row.optString("steamId");
@@ -145,10 +150,12 @@ final class Catalog {
                         }
                         if(path!=null && path.startsWith("/art/")){
                             String id=uri.getLastPathSegment();
-                            if(entries.containsKey(id) && uuid!=null && uuid.matches("[a-zA-Z0-9-]+")){
+                            AppView.AppObject game=entries.get(id);
+                            if(game!=null && uuid!=null && uuid.matches("[a-zA-Z0-9-]+")){
                                 File file=new File(new File(new File(home.host.getCacheDir(),"boxart"),uuid),id+".png");
                                 if(file.isFile())return new WebResourceResponse("image/png",null,new FileInputStream(file));
-                                InputStream stream=home.library.openCatalogCover(entries.get(id));
+                                com.limelight.grid.AppGridAdapter library=home.library;
+                                InputStream stream=library==null?null:library.openCatalogCover(game);
                                 if(stream!=null)return new WebResourceResponse("image/png",null,stream);
                             }
                         }
@@ -165,7 +172,7 @@ final class Catalog {
             }
             @Override public void onPageFinished(WebView view,String url){
                 if((ORIGIN+"index.html").equals(url)){ready=true;barState="";updateBar();applyTheme();
-                    if(!BuildConfig.REMOTE_BUILD)web.evaluateJavascript("restoreArtwork("+JSONObject.quote(home.host.getIntent().getStringExtra(AppView.UUID_EXTRA))+")",null);
+                    web.evaluateJavascript("restoreArtwork("+JSONObject.quote(home.host.getIntent().getStringExtra(AppView.UUID_EXTRA))+")",null);
                     update();}
             }
             @Override public boolean shouldOverrideUrlLoading(WebView v,String url){

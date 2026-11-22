@@ -1,6 +1,7 @@
 """Report only whether the selected game's Windows process owns the foreground."""
 import ctypes,hashlib,time
 from ctypes import wintypes as wt
+from functools import lru_cache
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).with_name("vendor")))
@@ -52,6 +53,39 @@ class MonitorInfo(ctypes.Structure):
 class MonitorDevice(MonitorInfo):
     _fields_=[("device",wt.WCHAR*32)]
 
+class DisplayDevice(ctypes.Structure):
+    _fields_=[("size",wt.DWORD),("name",wt.WCHAR*32),("label",wt.WCHAR*128),
+              ("flags",wt.DWORD),("device_id",wt.WCHAR*128),("key",wt.WCHAR*128)]
+
+@lru_cache(maxsize=1)
+def capture_log_hint(log,mtime,size):
+    # A playing client polls this twice a second. Parse the log once per file change.
+    import re
+    with log.open("rb") as stream:
+        stream.seek(max(0,size-1048576))
+        data=stream.read().replace(b"\0",b"").decode("utf8","ignore")
+    events=re.findall(r"Virtual Display (?:created at ([^\r\n]+)|removed successfully)",data)
+    if events:return events[-1].strip().casefold(),None
+    if "Session resuming for app [Virtual Display]" in data:
+        section=data.rsplit("Session resuming for app [Virtual Display]",1)[1]
+        regions=re.findall(r"Capture size\s*:\s*(\d+)x(\d+)\s+Offset\s*:\s*(-?\d+)x(-?\d+)",section)
+        if regions:return None,tuple(map(int,regions[-1]))
+    return None,None
+
+def apollo_monitors(monitors):
+    attached={m.device.casefold():m for m in monitors}
+    candidates=[]
+    enum=ctypes.windll.user32.EnumDisplayDevicesW
+    index=0
+    while True:
+        device=DisplayDevice();device.size=ctypes.sizeof(device)
+        if not enum(None,index,ctypes.byref(device),0):break
+        monitor=attached.get(device.name.casefold())
+        if monitor is not None and device.device_id.casefold()==r"root\sudomaker\sudovda":
+            candidates.append(monitor)
+        index+=1
+    return candidates
+
 def capture_monitor(require_virtual=False):
     """Use Apollo's active virtual output, including negative desktop coordinates."""
     dpi=getattr(ctypes.windll.user32,"SetThreadDpiAwarenessContext",None)
@@ -62,22 +96,13 @@ def capture_monitor(require_virtual=False):
         if previous:dpi(wt.HANDLE(previous))
 
 def find_capture_monitor(require_virtual):
-    import os,re
+    import os
     log=Path(os.environ["ProgramFiles"])/"Apollo/config/sunshine.log"
     name=None
     capture=None
     try:
-        with log.open("rb") as stream:
-            stream.seek(max(0,stream.seek(0,2)-1048576))
-            data=stream.read().replace(b"\0",b"").decode("utf8","ignore")
-        events=re.findall(r"Virtual Display (?:created at ([^\r\n]+)|removed successfully)",data)
-        if events:name=events[-1].strip().casefold()
-        # A long session can outlive the creation line in the log tail.
-        # Apollo reports offsets relative to the virtual desktop origin.
-        if not events and "Session resuming for app [Virtual Display]" in data:
-            section=data.rsplit("Session resuming for app [Virtual Display]",1)[1]
-            regions=re.findall(r"Capture size\s*:\s*(\d+)x(\d+)\s+Offset\s*:\s*(-?\d+)x(-?\d+)",section)
-            if regions:capture=tuple(map(int,regions[-1]))
+        stat=log.stat()
+        name,capture=capture_log_hint(log,stat.st_mtime_ns,stat.st_size)
     except OSError:pass
     monitors=[]
     callback=ctypes.WINFUNCTYPE(wt.BOOL,wt.HANDLE,wt.HDC,ctypes.POINTER(wt.RECT),wt.LPARAM)
@@ -87,15 +112,23 @@ def find_capture_monitor(require_virtual):
         if ctypes.windll.user32.GetMonitorInfoW(wt.HANDLE(handle),ctypes.byref(info)):monitors.append(info)
         return True
     ctypes.windll.user32.EnumDisplayMonitors(None,None,visit,0)
+    return select_capture_monitor(monitors,name,capture,require_virtual)
+
+def select_capture_monitor(monitors,name,capture,require_virtual):
     match=next((m for m in monitors if m.device.casefold()==name),None)
+    if match:return match
+    # A rotated log or an existing output can omit the creation event. Geometry
+    # alone is ambiguous in a household with a physical secondary monitor.
+    eligible=apollo_monitors(monitors) if require_virtual else monitors
     if not name and capture and len(monitors)>1:
         width,height,x,y=capture
         left=min(m.monitor.left for m in monitors)+x
         top=min(m.monitor.top for m in monitors)+y
-        candidates=[m for m in monitors if not m.flags&1 and
+        candidates=[m for m in eligible if (require_virtual or not m.flags&1) and
                     (m.monitor.left,m.monitor.top,m.monitor.right,m.monitor.bottom)==(left,top,left+width,top+height)]
         if len(candidates)==1:return candidates[0]
-    return match if name else (monitors[0] if len(monitors)==1 and not require_virtual else None)
+    if require_virtual and len(eligible)==1:return eligible[0]
+    return monitors[0] if not name and len(monitors)==1 and not require_virtual else None
 
 def stream_launch_args(key):
     # The DX9 fullscreen renderer can leave Desktop Duplication showing the desktop.

@@ -18,9 +18,13 @@ import javax.net.ssl.*;
 final class ControlLink {
     final ConsoleHome home;
     final ExecutorService io=Executors.newSingleThreadExecutor();
+    private final ExecutorService mediaIo=Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.atomic.AtomicBoolean fetchingMedia=new java.util.concurrent.atomic.AtomicBoolean();
     volatile boolean busy,closed;
     volatile long lastResponse;
-    int mediaCount=-1;
+    private volatile int mediaCount=-1;
+    private volatile long mediaRetryAfter;
+    private String displayedCatalog="";
     String fingerprint;
     JSONObject snapshot=new JSONObject();
     ControlLink(ConsoleHome h){home=h;}
@@ -115,14 +119,11 @@ final class ControlLink {
                 String uuid=home.host.getIntent().getStringExtra(AppView.UUID_EXTRA);
                 if(uuid!=null){
                     home.host.getSharedPreferences("studio",0).edit().putString("lastUuid",uuid).putString("lastHost",host).apply();
+                    SharedPreferences.Editor images=prefs().edit().putString("artHost",host);
                     JSONObject art=status.optJSONObject("pcArtwork");
-                    if(art!=null)prefs().edit().putString("artwork",art.toString()).apply();
-                    JSONObject atlas=status.optJSONObject("coverAtlas");if(atlas!=null)prefs().edit().putString("atlas",atlas.toString()).apply();
-                }
-                int available=status.optInt("mediaCount",0);
-                if(!BuildConfig.REMOTE_BUILD && available>0 && (mediaCount<0 || available-mediaCount>=12 || status.optJSONArray("catalog")!=null && available==status.optJSONArray("catalog").length()&&available!=mediaCount)){
-                    JSONObject media=request(host,"/catalog-media",null,pin,token);mediaCount=available;
-                    home.host.runOnUiThread(()->{if(!closed)home.console.web.evaluateJavascript("receiveMedia("+media+")",null);});
+                    if(art!=null)images.putString("artwork",art.toString());
+                    JSONObject atlas=status.optJSONObject("coverAtlas");if(atlas!=null)images.putString("atlas",atlas.toString());
+                    images.apply();
                 }
                 JSONObject names=status.optJSONObject("profileNames");
                 if(names!=null){
@@ -145,13 +146,31 @@ final class ControlLink {
                         long ms=SystemClock.elapsedRealtime()-before;min=Math.min(min,ms);max=Math.max(max,ms);sum+=ms;received++;}catch(Exception ignored){}}
                     status.put("measurement",new JSONObject().put("received",received).put("mean",received==0?0:sum/received).put("spread",received==0?0:max-min));
                 }
+                org.json.JSONArray live=status.optJSONArray("catalog");
+                String catalog=live==null?null:live.toString();
+                String script="controlState("+status+")";
                 home.host.runOnUiThread(()->{if(closed)return;snapshot=status;
-                    org.json.JSONArray live=status.optJSONArray("catalog");
-                    if(live!=null && !live.toString().equals(home.console.liveRows.toString())){home.console.liveRows=live;home.console.update();}
-                    if(namesChanged(status))home.console.update();emit(status);});
+                    boolean changed=catalog!=null&&!catalog.equals(displayedCatalog);
+                    if(changed){displayedCatalog=catalog;home.console.liveRows=live;}
+                    if(namesChanged(status)||changed)home.console.update();
+                    home.console.web.evaluateJavascript(script,null);});
+                fetchMedia(host,pin,token,status.optInt("mediaCount",0),live==null?0:live.length());
             }catch(Exception e){home.host.runOnUiThread(()->fail(e instanceof IOException && e.getMessage()!=null && e.getMessage().length()<100?e.getMessage():"Keine Verbindung zur PC-Verwaltung."));}
             finally{busy=false;}
         });
+    }
+    private void fetchMedia(String host,String pin,String token,int available,int catalogSize){
+        if(BuildConfig.REMOTE_BUILD||closed||available<=0||available==mediaCount||SystemClock.elapsedRealtime()<mediaRetryAfter)return;
+        if(mediaCount>=0 && available>mediaCount && available-mediaCount<12 && available!=catalogSize)return;
+        if(!fetchingMedia.compareAndSet(false,true))return;
+        try{mediaIo.execute(()->{
+            try{
+                String script="receiveMedia("+request(host,"/catalog-media",null,pin,token)+")";
+                mediaCount=available;
+                home.host.runOnUiThread(()->{if(!closed)home.console.web.evaluateJavascript(script,null);});
+            }catch(Exception ignored){mediaRetryAfter=SystemClock.elapsedRealtime()+30000;}
+            finally{fetchingMedia.set(false);}
+        });}catch(RejectedExecutionException ignored){fetchingMedia.set(false);}
     }
     void play(AppView.AppObject game){
         if(!prefs().contains("token")){
@@ -256,5 +275,5 @@ final class ControlLink {
         if(label.equals(lastDisplayedProfile))return false;
         lastDisplayedProfile=label;return true;
     }
-    void close(){closed=true;io.shutdownNow();}
+    void close(){closed=true;io.shutdownNow();mediaIo.shutdownNow();}
 }

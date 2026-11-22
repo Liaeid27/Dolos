@@ -8,19 +8,22 @@ function manage(title){
 }
 function controlState(data){
  if(data.measurement)measurement=data.measurement;
- const previousAtlas=atlasRev;
- if(atlasHost&&data.pcArtwork){applyAtlas(data.coverAtlas);try{localStorage.setItem("dolos.artwork."+atlasHost,JSON.stringify({art:data.pcArtwork,atlas:data.coverAtlas}))}catch(e){}}
- const newArt=data.pcArtwork&&Object.keys(data.pcArtwork).length&&!controlData.pcArtwork;
  if(data.error&&page==="manage"&&managePage==="Downloads"&&controlData.apps){controlData={...controlData,downloadError:data.error};drawManage();return}
+ const previousAtlas=atlasRev,previousArt=controlData.pcArtwork||{},changedArt=new Set();
+ if(data.pcArtwork){
+   for(const id of Object.keys(data.pcArtwork)){
+     const current=data.pcArtwork[id],prior=previousArt[id];
+     if(!prior||current.cover!==prior.cover||current.hero!==prior.hero)changedArt.add(id);
+   }
+   for(const id of Object.keys(previousArt))if(!data.pcArtwork[id])changedArt.add(id);
+   if(atlasHost){
+     applyAtlas(data.coverAtlas);
+     if(changedArt.size||previousAtlas!==atlasRev)try{localStorage.setItem("dolos.artwork."+atlasHost,JSON.stringify({art:data.pcArtwork,atlas:data.coverAtlas}))}catch(e){}
+   }
+ }else if(controlData.pcArtwork)data.pcArtwork=previousArt;
  controlData=data;renderSaveInfo();
- if(newArt||previousAtlas!==atlasRev){
-    if(page==="home"){for(const b of $("#rail").children){const g=items.find(i=>i.id===b.dataset.id);if(pcArt(g,"cover"))art(b,g)}lastWall=null;background(current())}
-    else if(page==="store")showStore(false);
-    else if(page==="product"){lastWall=null;background(product)}
- }
- if(data.covers){let changed=false;for(const g of items){const value=data.covers[g.steamId||g.name];if(typeof value==="boolean"&&g.hasCover!==value){g.hasCover=value;changed=true}}
-  if(changed&&page==="store"){const id=document.activeElement?.dataset.id;showStore(id||false)}}
-
+ let coversChanged=false;
+ if(data.covers)for(const g of items){const value=data.covers[g.steamId||g.name];if(typeof value==="boolean"&&g.hasCover!==value){g.hasCover=value;coversChanged=true}}
  let stateChanged=false;
  if(data.apps)for(const g of items){
    const before=g.state;
@@ -31,7 +34,23 @@ function controlState(data){
    if(g.transfer)g.state="cached";
    stateChanged=stateChanged||before!==g.state;g.removable=g.state==="installed";
  }
- if(page==="store"){if(stateChanged&&(filter===1||filter===2))showStore(document.activeElement?.dataset.id||false);else refreshStoreCards()}
+ const atlasChanged=previousAtlas!==atlasRev;
+ if(page==="store"&&stateChanged&&(filter===1||filter===2)){
+   const grid=$(".grid"),focused=document.activeElement,index=[...grid.children].indexOf(focused),top=grid.scrollTop;
+   showStore(false);
+   if(index>=0){const row=[...grid.children].find(card=>card.dataset.id===focused.dataset.id)||grid.children[Math.min(index,grid.children.length-1)]||$("#filters .active");row?.focus({preventScroll:true})}
+   grid.scrollTop=top;
+ }else if(page==="home"||page==="store"){
+   if(atlasChanged||changedArt.size){
+     const home=page==="home",byId=new Map(items.map(g=>[g.id,g]));
+     for(const tile of (home?$("#rail"):$(".grid")).children){
+       const game=byId.get(tile.dataset.id);
+       if(game&&(atlasChanged||changedArt.has(game.steamId)))art(home?tile:tile.querySelector(".art"),game);
+     }
+     if(home&&changedArt.has(current().steamId)){lastWall=null;background(current())}
+   }
+   if(page==="store"){if((coversChanged&&missingLast)||(stateChanged&&order===2))sortStoreCards();refreshStoreCards()}
+ }else if(page==="product"&&changedArt.has(product?.steamId)){lastWall=null;background(product)}
  if(page==="manage")drawManage()
 }
 function bytes(n){return n>=1073741824?(n/1073741824).toFixed(1)+" GB":Math.round((n||0)/1048576)+" MB"}

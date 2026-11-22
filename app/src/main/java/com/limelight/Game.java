@@ -1378,6 +1378,17 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private volatile boolean managedLaunchReady;
     private volatile boolean closingGame;
     private boolean checkingTerms;
+    private android.app.Dialog pictureOptions;
+    private static final class SurfaceProbe {
+        volatile int result=-1;
+        @android.annotation.TargetApi(24)
+        void start(android.view.Surface source,android.os.Handler handler){
+            android.graphics.Bitmap pixel=android.graphics.Bitmap.createBitmap(1,1,android.graphics.Bitmap.Config.ARGB_8888);
+            try{
+                android.view.PixelCopy.request(source,pixel,status->{pixel.recycle();result=status;},handler);
+            }catch(IllegalArgumentException e){pixel.recycle();result=android.view.PixelCopy.ERROR_SOURCE_INVALID;}
+        }
+    }
     private String foregroundPath(boolean virtual){
         String path="/foreground/"+screenKey;
         String session=gameSession;
@@ -1391,6 +1402,16 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }else if(launchCurtain.getVisibility()==View.VISIBLE){
             launchCurtain.animate().alpha(0f).setDuration(180).withEndAction(()->launchCurtain.setVisibility(View.GONE)).start();
         }
+    }
+    private void showPictureOptions(String host,String pin,String token){
+        if(isFinishing()||checkingTerms||pictureOptions!=null)return;
+        pictureOptions=ConsoleDock.panel(this,"Spielbild prüfen",null,
+            new String[]{"Weiter warten","Steam-Nutzungsbedingungen prüfen","Stream direkt ansehen (Desktop möglich)","Zur Bibliothek"},i->{
+                if(i==1)checkLaunchTerms(host,pin,token);
+                else if(i==2){manualPicture=true;setGamePictureVisible(true);streamView.requestFocus();}
+                else if(i==3)returnToLibrary();
+            },-1);
+        pictureOptions.setOnDismissListener(dialog->pictureOptions=null);
     }
     private void guardGameDisplay() {
         android.content.SharedPreferences prefs=getSharedPreferences("dolos-control-"+getIntent().getStringExtra(EXTRA_PC_UUID),MODE_PRIVATE);
@@ -1411,11 +1432,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         final android.widget.Button exit=new android.widget.Button(this);exit.setText("Zur Startseite　 ·　 Spielmenü-Taste halten");exit.setAllCaps(false);
         exit.setOnClickListener(v->{
             if (Boolean.TRUE.equals(exit.getTag())) {
-                ConsoleDock.show(this,"Spielbild prüfen",new String[]{"Weiter warten","Steam-Nutzungsbedingungen prüfen","Stream direkt ansehen (Desktop möglich)","Zur Startseite"},i->{
-                    if(i==1){checkLaunchTerms(host,pin,token);}
-                    else if(i==2){manualPicture=true;setGamePictureVisible(true);streamView.requestFocus();}
-                    else if(i==3)returnToLibrary();
-                });
+                showPictureOptions(host,pin,token);
             } else returnToLibrary();
         });
         FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-2,-2,android.view.Gravity.BOTTOM|android.view.Gravity.CENTER_HORIZONTAL);
@@ -1427,9 +1444,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 gameSession=launched.optString("session",null);
                 managedLaunchReady=true;
             }catch(Exception e){runOnUiThread(()->ConsoleDock.show(this,e.getMessage(),new String[]{"Zur Startseite"},i->returnToLibrary()));return;}
-            boolean previous=false,wasRunning=false;int readySamples=0,closedSamples=0;long prepared=0;
+            boolean previous=false,wasRunning=false;int closedSamples=0;long prepared=0;
             long waitingSince=android.os.SystemClock.elapsedRealtime();
-            boolean revealed=false;String lastTerms="";
+            boolean revealed=false,offeredPictureOptions=false;String lastTerms="";
+            long baseline=0,visibleSince=0;
+            SurfaceProbe probe=null;
             while(!stopCurtainMonitor){
                 boolean visible=false;String stage="";
                 try{
@@ -1451,7 +1470,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         }catch(Exception ignored){}
                         runOnUiThread(this::returnToLibrary);return;
                     }
-                    if(!closingGame&&!visible&&android.os.SystemClock.elapsedRealtime()-prepared>3000){
+                    if(!closingGame&&!visible&&(previous||android.os.SystemClock.elapsedRealtime()-prepared>1200)){
                         prepared=android.os.SystemClock.elapsedRealtime();
                         visible=ControlLink.request(host,"/screen/"+screenKey,new org.json.JSONObject().put("action","prepare").put("virtual",virtual).put("session",gameSession),pin,token).optBoolean("visible");
                     }
@@ -1462,20 +1481,44 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         continue;
                     }
                 }
-                readySamples=visible?readySamples+1:0;
-                if(readySamples>=2)revealed=true;
-                else if(!visible)revealed=false;
+                long now=android.os.SystemClock.elapsedRealtime();
+                if(!visible){
+                    probe=null;revealed=false;
+                }else if(!previous){
+                    baseline=decoderRenderer.getFramesSentToSurface();
+                    visibleSince=now;
+                }else if(!revealed && decoderRenderer.getFramesSentToSurface()>baseline){
+                    android.view.Surface surface=streamView.getHolder().getSurface();
+                    if(surface!=null&&surface.isValid()){
+                        if(Build.VERSION.SDK_INT<24)revealed=true;
+                        else if(probe==null || probe.result==android.view.PixelCopy.ERROR_SOURCE_NO_DATA){
+                            probe=new SurfaceProbe();
+                            probe.start(surface,new android.os.Handler(getMainLooper()));
+                        }else{
+                            // Some protected or vendor surfaces cannot be copied. Require several
+                            // successful decoder outputs and another positive PC check in that case.
+                            revealed=probe.result==android.view.PixelCopy.SUCCESS ||
+                                (now-visibleSince>=1800 && decoderRenderer.getFramesSentToSurface()-baseline>=3);
+                        }
+                    }
+                }
                 final boolean show=revealed;
                 if(show)waitingSince=android.os.SystemClock.elapsedRealtime();
+                boolean decoderStalled=visible&&!show&&now-visibleSince>=14000;
+                final boolean offerOptions=decoderStalled&&!offeredPictureOptions;
+                if(!visible||show)offeredPictureOptions=false;
+                else if(offerOptions)offeredPictureOptions=true;
                 final boolean delayed=!show&&android.os.SystemClock.elapsedRealtime()-waitingSince>22000;
-                final boolean gameRunning=wasRunning;final String launchStage=stage;
+                final boolean gameRunning=wasRunning,waitingForDecoder=visible&&!show;final String launchStage=stage;
                 final boolean changed=previous!=visible;runOnUiThread(()->{
                     if(stopCurtainMonitor||closingGame||isFinishing())return;
                     if(delayed&&!launchStage.isEmpty())exit.setText(launchStage+"　 ·　 Zur Startseite");
                     else if(delayed)exit.setText(gameRunning?"Spiel läuft · Warte auf das Bild am Stream-Display　 ·　 Zur Startseite":"Warte auf das Spielfenster　 ·　 Startdialog prüfen");
                     exit.setTag(delayed);
-                    if(delayed && gameRunning)exit.setText("Spiel läuft · Bildoptionen öffnen");
-                    if(show)manualPicture=false;
+                    if(delayed && waitingForDecoder)exit.setText("Spielfenster bereit · Videobild prüfen");
+                    else if(delayed && gameRunning)exit.setText("Spiel läuft · Bildoptionen öffnen");
+                    if(show){manualPicture=false;if(pictureOptions!=null)pictureOptions.dismiss();}
+                    if(offerOptions&&!manualPicture)showPictureOptions(host,pin,token);
                     if(manualPicture)return;
                     boolean covered=launchCurtain.getVisibility()==View.VISIBLE;
                     setGamePictureVisible(show);
@@ -1483,7 +1526,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     else if(changed)exit.requestFocus();
                 });
                 previous=visible;
-                try{Thread.sleep(550);}catch(InterruptedException e){return;}
+                // Poll briefly through the first frames, then keep the normal low-rate monitor.
+                try{Thread.sleep(visible&&!show&&now-visibleSince<1800?150:550);}catch(InterruptedException e){return;}
             }
         },"Dolos-Game-Focus").start();
     }

@@ -132,14 +132,13 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     boolean openingLibraryAfterBoot(){return pendingLibrary!=null&&inForeground;}
     private boolean bootComplete;
     private Runnable pendingLibrary;
-    private boolean wakeSent;
     private void autoConnect(ComputerDetails pc) {
         android.content.SharedPreferences prefs=getSharedPreferences("console",MODE_PRIVATE);
         if (!inForeground || openedHost || !pc.uuid.equals(prefs.getString("host",""))) return;
         if (pc.state==ComputerDetails.State.ONLINE && pc.pairState==PairState.PAIRED) {
             doAppList(pc,false,false);
-        } else if (!wakeSent && pc.state==ComputerDetails.State.OFFLINE && prefs.getBoolean("wake",true)) {
-            wakeSent=true; doWakeOnLan(pc);
+        } else if (pc.state==ComputerDetails.State.OFFLINE) {
+            BootWake.request(this,BootWake.session(getIntent()),pc);
         }
     }
 
@@ -270,6 +269,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         pcGridAdapter = new PcGridAdapter(this, PreferenceConfiguration.readPreferences(this));
 
         initializeViews();
+        BootWake.atFilmStart(this,BootWake.session(getIntent()));
         ConsoleBoot.show(this,()->{
             bootComplete=true;
             if(pendingLibrary!=null && inForeground){Runnable next=pendingLibrary;pendingLibrary=null;next.run();}
@@ -632,6 +632,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         openedHost=true;
         getSharedPreferences("console",MODE_PRIVATE).edit().putString("host",computer.uuid).apply();
         Intent i = new Intent(this, AppView.class);
+        BootWake.carry(getIntent(),i);
         i.putExtra(AppView.NAME_EXTRA, computer.name);
         i.putExtra(AppView.UUID_EXTRA, computer.uuid);
         i.putExtra(AppView.NEW_PAIR_EXTRA, newlyPaired);

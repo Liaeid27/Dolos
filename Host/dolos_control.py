@@ -56,9 +56,12 @@ def cached_art(steam,ids):
         if not sid.isdecimal() or len(sid)>10:continue
         folder=base/sid
         if not folder.is_dir():continue
-        for kind,filename in (("cover","library_600x900.jpg"),("hero","library_hero.jpg")):
-            file=next(folder.glob("*/"+filename),folder/filename)
-            if file.is_file():found[(sid,kind)]=file
+        for kind,filenames in (("cover",("library_600x900.jpg","library_capsule.jpg","library_600x900_german.jpg","library_capsule_german.jpg")),("hero",("library_hero.jpg",))):
+            for filename in filenames:
+                file=next(folder.glob("*/"+filename),folder/filename)
+                if file.is_file():
+                    found[(sid,kind)]=file
+                    break
     return found
 
 def refresh_catalog():
@@ -70,28 +73,34 @@ def refresh_catalog():
     owned=Path(__file__).with_name("Steam-Bibliothek.json")
     states=expand(steam,games,owned if owned.exists() else None)
     artwork=Path(os.environ["ProgramFiles"])/"Apollo"/"config"
-    COVERS={k:bool((v[1] and v[1].is_file()) or (artwork/"aster-grid-art"/(k+".art")).is_file() or (artwork/"aster-steam-art"/(k+".jpg")).is_file()) for k,v in games.items()}
+    covers={k:bool((v[1] and v[1].is_file()) or (artwork/"aster-grid-art"/(k+".art")).is_file() or (artwork/"aster-steam-art"/(k+".jpg")).is_file()) for k,v in games.items()}
     from dolos_pc import host_entries
-    for row in host_entries():COVERS[row["name"]]=bool(row.get("image-path") and Path(row["image-path"]).is_file())
+    for row in host_entries():covers[row["name"]]=bool(row.get("image-path") and Path(row["image-path"]).is_file())
     links=Path(__file__).with_name("Spielseiten.json")
     STORE_LINKS=json.loads(links.read_text(encoding="utf8")) if links.is_file() else {}
     global ART_FILES,ART_REVISIONS,ATLAS
-    ART_FILES=cached_art(steam,games)
+    files=cached_art(steam,games)
     for sid,(_,image,*rest) in games.items():
         hero=DATA/"store-media"/(sid+"-hero.jpg")
-        if hero.is_file():ART_FILES.setdefault((sid,"hero"),hero)
+        if hero.is_file():files.setdefault((sid,"hero"),hero)
         for candidate in (DATA/"store-media"/(sid+".jpg"),artwork/"aster-grid-art"/(sid+".art"),image,artwork/"aster-steam-art"/(sid+".jpg")):
             if candidate and candidate.is_file():
-                ART_FILES.setdefault((sid,"cover"),candidate)
+                files.setdefault((sid,"cover"),candidate)
                 break
     revisions={}
-    for (sid,kind),path in ART_FILES.items():
-        if kind=="cover":COVERS[sid]=True
-        revisions.setdefault(sid,{})[kind]=int(path.stat().st_mtime)
-    ART_REVISIONS=revisions
+    for (sid,kind),path in list(files.items()):
+        try:stat=path.stat()
+        except FileNotFoundError:
+            del files[(sid,kind)]
+            continue
+        if kind=="cover":covers[sid]=True
+        stamp=f"{path}:{stat.st_mtime_ns}:{stat.st_size}".encode()
+        revisions.setdefault(sid,{})[kind]=int.from_bytes(hashlib.sha256(stamp).digest()[:5],"big")
     from cover_atlas import prepare
-    try:ATLAS=prepare(DATA,ART_FILES)
-    except (OSError,ValueError,subprocess.SubprocessError):ATLAS={}
+    try:atlas=prepare(DATA,files)
+    except (OSError,ValueError,subprocess.SubprocessError):atlas=ATLAS
+    with LOCK:
+        ART_FILES,ART_REVISIONS,COVERS,ATLAS=files,revisions,covers,atlas
     global REQUIRED,SIZE_STAMP
     try:
         stamp=(steam/"appcache/appinfo.vdf").stat().st_mtime_ns
@@ -510,7 +519,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path in ("/status","/status/downloads") and not post:
                 if self.path=="/status/downloads":TRANSFER_VIEW_UNTIL=time.monotonic()+12
-                with LOCK:status=dict(LAST,hostBuild=340,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
+                with LOCK:status=dict(LAST,hostBuild=341,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
                 last=read("last-launch.json",{})
                 if last.get("id") and not last.get("closed") and (running(last["id"]) or launch_pending(last) and not last.get("ending")):
                     status["activeGame"]={"id":last["id"],"request":last.get("request"),"profile":last.get("profile",0),"name":status.get("apps",{}).get(last["id"],{}).get("name","Spiel")}

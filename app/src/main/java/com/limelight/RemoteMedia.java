@@ -14,6 +14,8 @@ import okhttp3.Response;
 /** Disk-backed remote catalogue media. Trailers keep their own adaptive streaming transport. */
 final class RemoteMedia {
     private static OkHttpClient client;
+    private static final ArtworkCache artwork=new ArtworkCache(96L*1024*1024,
+        java.util.concurrent.Executors.newSingleThreadExecutor());
     private static synchronized OkHttpClient client(Context context){
         if(client==null)client=new OkHttpClient.Builder()
             .cache(new Cache(new File(context.getCacheDir(),"remote-store"),96L*1024*1024))
@@ -32,13 +34,14 @@ final class RemoteMedia {
         String host=studio.getString("lastHost","");
         android.content.SharedPreferences pair=context.getSharedPreferences("dolos-control-"+uuid,0);
         String pin=pair.getString("cert",null),token=pair.getString("token",null);
-        if(pin==null||token==null||!uuid.equals(studio.getString("lastUuid","")))throw new IOException("Host unavailable");
+        if(pin==null||token==null)throw new IOException("Host unavailable");
+        String address=pair.getString("artHost",uuid.equals(studio.getString("lastUuid",""))?host:"");
+        final String endpoint=BuildConfig.REMOTE_BUILD?context.getSharedPreferences("remote",0).getString("host."+uuid,address):address;
         File folder=new File(context.getCacheDir(),"pc-art-"+uuid.replaceAll("[^a-zA-Z0-9-]",""));
-        folder.mkdirs();File file=new File(folder,path.substring(9).replace('/','_')+".jpg");
-        if(!file.isFile()){
-            File tmp=File.createTempFile("partial",".tmp",folder);
-            try{
-                javax.net.ssl.HttpsURLConnection c=ControlLink.connection(host,path,pin);
+        File file=new File(folder,path.substring(9).replace('/','_')+".jpg");
+        return new WebResourceResponse("image/jpeg",null,artwork.open(file,tmp->{
+                if(endpoint.isEmpty())throw new IOException("Host unavailable");
+                javax.net.ssl.HttpsURLConnection c=ControlLink.connection(endpoint,path,pin);
                 try{
                     c.setRequestProperty("Authorization","Bearer "+token);
                     if(c.getResponseCode()!=200)throw new IOException("No image");
@@ -48,13 +51,7 @@ final class RemoteMedia {
                         if(total<4||total!=c.getContentLength())throw new IOException("Incomplete image");
                     }
                 }finally{c.disconnect();}
-                if(!tmp.renameTo(file)&&!file.isFile())throw new IOException("Cache unavailable");
-                File[] files=folder.listFiles((dir,name)->name.endsWith(".jpg"));
-                if(files!=null){java.util.Arrays.sort(files,(x,y)->Long.compare(y.lastModified(),x.lastModified()));long used=0;
-                    for(File entry:files){used+=entry.length();if(used>96L*1024*1024&&!entry.equals(file))entry.delete();}}
-            }catch(Exception e){throw new IOException(e);}finally{tmp.delete();}
-        }
-        return new WebResourceResponse("image/jpeg",null,new java.io.FileInputStream(file));
+        }));
     }
     static WebResourceResponse fetch(Context context,String url,boolean metadata)throws IOException{
         OkHttpClient http=client(context);

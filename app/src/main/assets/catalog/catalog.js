@@ -26,6 +26,7 @@ function refreshClock(){const date=new Date();$("time").textContent=date.toLocal
 refreshClock();setInterval(refreshClock,15000);
 let sortFrame=0;
 function classifyCover(g,im){
+ if(im)im.classList.toggle("wideCover",im.naturalWidth>=im.naturalHeight);
  if(!window.remoteArt && g.hasCover!=null && !g.id.startsWith("s"))return;
  let real=!!im;
  if(im){try{
@@ -36,11 +37,16 @@ function classifyCover(g,im){
     px[a+1]>=38&&px[a+1]<=51&&px[dark+2]>px[dark+1]&&Math.abs(px[dark+1]-px[dark])<13);
  }catch(e){}}
  if(real===coverFlags.get(g.id))return;coverFlags.set(g.id,real);
- if(page==="store"&&missingLast&&!sortFrame)sortFrame=requestAnimationFrame(()=>{sortFrame=0;
-  if(page!=="store")return;const grid=$(".grid"),active=document.activeElement,top=grid.scrollTop;
-  const cards=[...grid.children],map=new Map(items.map(i=>[i.id,i]));const sorted=[...cards].sort((a,b)=>rankGames(map.get(a.dataset.id),map.get(b.dataset.id)));
-  if(sorted.some((b,i)=>b!==cards[i])){sorted.forEach(b=>grid.append(b));if(cards.includes(active))active.focus({preventScroll:true});grid.scrollTop=top}
- })
+ if(page==="store"&&missingLast&&!sortFrame)sortFrame=requestAnimationFrame(()=>{sortFrame=0;sortStoreCards()})
+}
+function sortStoreCards(){
+ if(page!=="store")return;
+ const grid=$(".grid"),active=document.activeElement,top=grid.scrollTop;
+ const cards=[...grid.children],map=new Map(items.map(i=>[i.id,i]));
+ const sorted=cards.sort((a,b)=>rankGames(map.get(a.dataset.id),map.get(b.dataset.id)));
+ for(let i=0;i<sorted.length;i++)if(grid.children[i]!==sorted[i])grid.insertBefore(sorted[i],grid.children[i]);
+ if(active!==document.activeElement&&grid.contains(active))active.focus({preventScroll:true});
+ if(grid.scrollTop!==top)grid.scrollTop=top;
 }
 function pcArt(g,kind){
  const rev=typeof controlData!=="undefined"&&controlData.pcArtwork?.[g?.steamId]?.[kind];
@@ -48,6 +54,7 @@ function pcArt(g,kind){
 }
 let atlasHost="",atlasRev="",atlasCells=new Map(),atlasPages=new Map();
 function restoreArtwork(host){
+ if(atlasHost!==host){atlasRev="";atlasCells.clear();atlasPages.clear();controlData.pcArtwork={}}
  atlasHost=host;
  try{pcMedia=JSON.parse(localStorage.getItem("dolos.media."+host))||{}}catch(e){}
  try{const saved=JSON.parse(localStorage.getItem("dolos.artwork."+host));if(saved){controlData.pcArtwork=saved.art;applyAtlas(saved.atlas)}}catch(e){}
@@ -55,23 +62,92 @@ function restoreArtwork(host){
 function applyAtlas(def){
  if(!atlasHost||!def?.rev||atlasRev===def.rev||!Array.isArray(def.ids))return;
  atlasRev=def.rev;atlasCells=new Map(def.ids.map((id,i)=>[id,i]));atlasPages.clear();
- if(def.ids.length){const first=new Image();atlasPages.set(0,new Promise(resolve=>{first.onload=()=>resolve(true);first.onerror=()=>resolve(false);first.src="/artwork/0/atlas/"+atlasRev}))}
 }
+function atlasPage(page,url){
+ let cached=atlasPages.get(page);
+ if(cached&&(!cached.retryAt||Date.now()<cached.retryAt))return cached.result;
+ cached={retryAt:0,settled:false};
+ cached.result=new Promise(resolve=>{
+   const image=new Image();
+   image.onload=()=>{cached.settled=true;resolve(true);schedulePosters()};
+   image.onerror=()=>{cached.settled=true;cached.retryAt=Date.now()+4000;resolve(false);schedulePosters()};
+   image.src=url;
+ });
+ atlasPages.set(page,cached);return cached.result;
+}
+const visiblePosters=new Set(),finePosters=new Set();
+let posterObserver=null,posterTimer=0,posterLoads=0;
+function resetPosterObserver(){
+ posterObserver?.disconnect();posterObserver=null;visiblePosters.clear();
+ for(const cell of finePosters)if(!cell.isConnected)finePosters.delete(cell);
+}
+function schedulePosters(delay=240){
+ clearTimeout(posterTimer);posterTimer=setTimeout(refinePosters,delay);
+}
+function watchPoster(cell){
+ if(!cell.dataset.original)return;
+ if(cell.parentElement.classList.contains("art")&&window.IntersectionObserver){
+   if(!posterObserver)posterObserver=new IntersectionObserver((entries,observer)=>{
+     if(observer!==posterObserver)return;
+     for(const item of entries){
+       if(item.isIntersecting&&item.intersectionRatio>=.12)visiblePosters.add(item.target);else visiblePosters.delete(item.target);
+     }
+     schedulePosters();
+   },{root:$(".grid"),threshold:.12});
+   posterObserver.observe(cell);
+ }
+ schedulePosters();
+}
+function refinePosters(){
+ posterTimer=0;
+ if(document.hidden||!["home","store"].includes(page)||navigator.connection?.saveData)return;
+ for(const sheet of atlasPages.values())if(!sheet.settled)return;
+ const focus=page==="home"?$("#rail .current .atlasCover"):$(".card:focus .atlasCover");
+ const candidates=new Set([focus]);
+ if(page==="store"&&!window.remoteArt)for(const cell of visiblePosters)candidates.add(cell);
+ for(const cell of candidates){
+   if(posterLoads>=2)break;
+   if(!cell?.isConnected||!cell.dataset.original||cell.dataset.refinement||Number(cell.dataset.retryAt||0)>Date.now()||cell.clientWidth*(window.devicePixelRatio||1)<170)continue;
+   const image=new Image();image.alt="";image.decoding="async";image.fetchPriority="low";
+   cell.dataset.refinement="loading";posterLoads++;
+   image.onload=()=>{
+     posterLoads--;
+     if(cell.isConnected){
+       // Keep the natural proportions and the same framing as the preview sheet.
+       image.classList.toggle("wideCover",image.naturalWidth>=image.naturalHeight);
+       cell.append(image);cell.dataset.refinement="ready";finePosters.add(cell);
+       requestAnimationFrame(()=>image.classList.add("ready"));
+       for(const old of finePosters){
+         if(finePosters.size<=24)break;
+         if(old===focus||visiblePosters.has(old))continue;
+         old.replaceChildren();delete old.dataset.refinement;finePosters.delete(old);
+       }
+     }
+     if(!posterTimer)schedulePosters(80);
+   };
+   image.onerror=()=>{posterLoads--;delete cell.dataset.refinement;cell.dataset.retryAt=String(Date.now()+15000);if(!posterTimer)schedulePosters(80)};
+   image.src=cell.dataset.original;
+ }
+}
+document.addEventListener("focusin",()=>schedulePosters());
+$(".grid").addEventListener("scroll",()=>schedulePosters(),{passive:true});
+window.addEventListener("resize",()=>schedulePosters(),{passive:true});
 function paintAtlas(box,g){
  const n=atlasCells.get(g.steamId);if(n==null)return false;
  const rev=atlasRev,page=Math.floor(n/64),url="/artwork/"+page+"/atlas/"+rev;
- if(!atlasPages.has(page)){
-    const im=new Image();atlasPages.set(page,new Promise(resolve=>{im.onload=()=>resolve(true);im.onerror=()=>resolve(false);im.src=url}));
- }
  box.replaceChildren();const cell=document.createElement("span");cell.textContent=g.name;cell.className="placeholder";box.append(cell);
- atlasPages.get(page).then(ok=>{
-    if(cell.parentNode!==box||rev!==atlasRev)return;
-    if(!ok){atlasCells.delete(g.steamId);art(box,g);return}
+ atlasPage(page,url).then(ok=>{
+    if(!box.isConnected||cell.parentNode!==box||rev!==atlasRev)return;
+    if(!ok){art(box,g,true);return}
     cell.className="atlasCover";cell.textContent="";cell.style.backgroundImage="url("+url+")";
     cell.style.backgroundPosition=(n%8*100/7)+"% "+(Math.floor(n/8)%8*100/7)+"%";
+    cell.dataset.original=pcArt(g,"cover");watchPoster(cell);
  });return true;
 }
-function art(box,g){if(paintAtlas(box,g))return;if(window.remoteArt){remoteArt(box,g);return;}box.replaceChildren();const label=document.createElement("span");label.className="placeholder";label.textContent=g.name;box.append(label);
+function art(box,g,skipAtlas=false){
+ const old=box.querySelector(".atlasCover");
+ if(old){posterObserver?.unobserve(old);visiblePosters.delete(old);finePosters.delete(old)}
+ if(!skipAtlas&&paintAtlas(box,g))return;if(window.remoteArt){remoteArt(box,g);return;}box.replaceChildren();const label=document.createElement("span");label.className="placeholder";label.textContent=g.name;box.append(label);
  const urls=[...new Set([pcArt(g,"cover"),g.art,/^\d{1,10}$/.test(g.steamId||"")&&"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/"+g.steamId+"/library_600x900.jpg"].filter(Boolean))];
  if(!urls.length)return;
  const im=new Image();im.alt="";im.loading=box.className==="art"?"lazy":"eager";im.decoding="async";
@@ -177,7 +253,7 @@ function showStore(focusId){if(page!=="store")native("status");
  screen("store");background(null);const q=$("#search").value.trim().toLocaleLowerCase();
  const list=items.filter(g=>g.name.toLocaleLowerCase().includes(q)&&[true,g.state==="installed",download(g),["host","shortcut"].includes(g.state),g.pinned][filter]).sort(rankGames);
  document.querySelectorAll("#filters button").forEach((b,i)=>b.classList.toggle("active",i===filter));
- const grid=$(".grid");grid.replaceChildren();$("#empty").hidden=!!list.length;
+ const grid=$(".grid");grid.replaceChildren();resetPosterObserver();$("#empty").hidden=!!list.length;
  for(const g of list){const b=document.createElement("button");b.className="card";b.dataset.id=g.id;b.oncontextmenu=e=>{e.preventDefault();openGameOptions(g)};const cover=document.createElement("span");cover.className="art";art(cover,g);
  const name=document.createElement("strong");name.textContent=g.name+(g.transfer?" · "+transferLabel(g):"");b.append(cover,name);b.onclick=()=>detail(g);grid.append(b)}
  

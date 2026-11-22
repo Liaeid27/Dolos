@@ -25,7 +25,14 @@ body.art canvas,body[data-page="store"] canvas{visibility:hidden;animation-play-
 
 body.art .homeSeal,body[data-page="store"] .homeSeal{display:none}
 
-.atlasCover{position:absolute;inset:0;background-size:800% 800%;background-repeat:no-repeat}.tile,.card .art{position:relative}.tile .atlasCover{height:150%;top:-25%}
+.tile,.card .art{position:relative}
+.card .art{aspect-ratio:2/3}
+@supports not (aspect-ratio:2/3){.card .art{height:0;padding-bottom:150%}.card .art>img,.card .art>.placeholder{position:absolute;inset:0}}
+/* Every atlas cell is a 2:3 poster. Square tiles clip the same plane at its center. */
+.atlasCover{position:absolute;left:0;top:50%;width:100%;height:0;padding-bottom:150%;transform:translateY(-50%);overflow:hidden;background-size:800% 800%;background-repeat:no-repeat}
+.atlasCover img{position:absolute;inset:0;opacity:0;transition:opacity .16s ease}
+.atlasCover img.ready{opacity:1}
+.tile img.wideCover,.art img.wideCover{object-fit:contain;background-color:#17202e}
 
 .tools #pairPad{width:auto;font-size:.65rem;white-space:nowrap;padding:0 .7rem;border-radius:1.2rem;background:#ffffff14}.tools #pairPad[hidden]{display:none}
 

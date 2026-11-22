@@ -50,7 +50,7 @@ import android.widget.AdapterView.AdapterContextMenuInfo;
 import org.xmlpull.v1.XmlPullParserException;
 
 public class AppView extends Activity implements AdapterFragmentCallbacks {
-    private volatile boolean wakeAttempted;
+    private String wakeSession;
     private ConsoleHome home;
     private android.widget.ImageView startupStill;
     private android.widget.LinearLayout startupProgress;
@@ -225,13 +225,7 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
                     (details.state==ComputerDetails.State.ONLINE?"  ·  Online":home.link.lastResponse>0 && android.os.SystemClock.elapsedRealtime()-home.link.lastResponse<15000?"  ·  PC erreichbar":"  ·  Verbindung wird geprüft")));
                 if(details.state==ComputerDetails.State.OFFLINE) {
                     if(home.link.prefs().contains("token"))runOnUiThread(()->home.link.run("status","",""));
-                    if(!wakeAttempted && getSharedPreferences("console",MODE_PRIVATE).getBoolean("wake",true) && (BuildConfig.REMOTE_BUILD||details.macAddress!=null)) {
-                        wakeAttempted=true;
-                        new Thread(()->{
-                            try { RemoteWake.send(AppView.this,details); }
-                            catch(IOException e){runOnUiThread(()->Toast.makeText(AppView.this,"Wecksignal fehlgeschlagen",Toast.LENGTH_SHORT).show());}
-                        }).start();
-                    }
+                    BootWake.request(AppView.this,wakeSession,details);
                     return;
                 }
 
@@ -306,6 +300,7 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        wakeSession=BootWake.session(getIntent());
 
         // Assume we're in the foreground when created to avoid a race
         // between binding to CMS and onResume()

@@ -138,7 +138,7 @@ public class ComputerDatabaseManager {
         return -1 != computerDb.insertWithOnConflict(COMPUTER_TABLE_NAME, null, values, SQLiteDatabase.CONFLICT_REPLACE);
     }
 
-    private ComputerDetails getComputerFromCursor(Cursor c) {
+    private static ComputerDetails getComputerFromCursor(Cursor c) {
         ComputerDetails details = new ComputerDetails();
 
         details.uuid = c.getString(0);
@@ -191,7 +191,20 @@ public class ComputerDatabaseManager {
     }
 
     public ComputerDetails getComputerByUUID(String uuid) {
-        try (final Cursor c = computerDb.query(
+        return getComputerByUUID(computerDb,uuid);
+    }
+
+    /** Read the previously paired host while discovery and the startup film are starting. */
+    public static ComputerDetails readSavedComputer(Context context,String uuid) {
+        java.io.File file=context.getDatabasePath(COMPUTER_DB_NAME);
+        if(!file.isFile())return null;
+        try(SQLiteDatabase db=SQLiteDatabase.openDatabase(file.getPath(),null,SQLiteDatabase.OPEN_READONLY)){
+            return getComputerByUUID(db,uuid);
+        }
+    }
+
+    private static ComputerDetails getComputerByUUID(SQLiteDatabase db,String uuid) {
+        try (final Cursor c = db.query(
                 COMPUTER_TABLE_NAME, null, COMPUTER_UUID_COLUMN_NAME+"=?",
                 new String[]{ uuid }, null, null, null)
         ) {
