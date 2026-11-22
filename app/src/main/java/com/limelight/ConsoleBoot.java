@@ -40,8 +40,13 @@ final class ConsoleBoot {
                     }
                     break;
                 }
-                java.io.File box=new java.io.File(new java.io.File(new java.io.File(activity.getCacheDir(),"boxart"),uuid),intent.getIntExtra(Game.EXTRA_APP_ID,0)+".png");
-                if(box.isFile())bitmap=android.graphics.BitmapFactory.decodeFile(box.toString());
+                int artworkId=intent.getIntExtra("gameArtworkId",intent.hasExtra("managedLaunch")?0:intent.getIntExtra(Game.EXTRA_APP_ID,0));
+                java.io.File box=new java.io.File(new java.io.File(new java.io.File(activity.getCacheDir(),"boxart"),uuid),artworkId+".png");
+                if(artworkId!=0&&box.isFile()){
+                    bitmap=android.graphics.BitmapFactory.decodeFile(box.toString());
+                    final android.graphics.Bitmap cached=bitmap;
+                    if(cached!=null)activity.runOnUiThread(()->showGameArt(activity,layer,cached));
+                }
                 org.json.JSONObject all=new org.json.JSONObject(activity.getSharedPreferences("dolos-control-"+uuid,0).getString("artwork","{}"));
                 org.json.JSONObject art=all.optJSONObject(id);
                 if(art!=null){

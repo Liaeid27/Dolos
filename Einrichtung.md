@@ -36,7 +36,7 @@ Im Store unter „Sortieren“ stehen A–Z, Z–A, installierte Titel, selbst h
 
 48 installierte Steam-Spiele, drei Steam-fremde Verknüpfungen und 223 weitere lokale Katalogkandidaten wurden beim Lesetest gefunden. Ein Cache-Eintrag bestätigt noch keine Lizenz. Familienlisten können importiert werden. Der automatische Abruf sämtlicher Familienfreigaben aus einem Steam-Login ist offen.
 
-Das Standardprofil verwendet vorhandene Spielstände. Drei weitere benennbare Profile haben eigene Startbildschirme. Für Terraria sind lokale Spielstände über separate Verzeichnisse vorbereitet. Cloud-Charaktere, Online-Konten und andere Spiele benötigen jeweils ein geprüftes Profilverfahren. Universelle Spielstandtrennung ist offen.
+Das Standardprofil verwendet vorhandene Spielstände. Drei weitere benennbare Profile haben eigene Startbildschirme. Dolos merkt sich für jedes Profil die zuletzt gewählte Spielkachel. Beim ersten Start eines Spiels im Nebenprofil bietet die App die Einrichtung an, wenn Dolos einen eigenen lokalen Speicherordner dafür kennt. Spielstände auf den Servern eines Spiels richten sich nach dem dort angemeldeten Konto.
 
 Vor der Freigabe für den täglichen Betrieb stehen Tests mit dem konkreten TV aus. Dazu gehören Erstkopplung, Kaltstart, Entsperren, Installation und Entfernung eines echten Spiels, sichtbare Fensterwechsel, Controller-Wiederverbindung, Audio und längere Streams. Unbekannte Steam-Dialoge, Drittanbieter-Anmeldungen und Windows-Sicherheitsabfragen können weiterhin Eingaben am PC benötigen. Der Kommunikations- und Katalogtest wurde ausschließlich über die lokale Loopback-Schnittstelle ausgeführt. Die Vorschau zeigt die echte Menüoberfläche in einer Browser-Testumgebung. Der Download-Screenshot verwendet Beispieldaten.
 
@@ -118,3 +118,7 @@ Für den direkten Steam-Spielstart einmal **Dolos-PC → Einrichtung → Spielst
 Dolos prüft vor einem Download den freien Speicher gegen die bekannten Windows-Depotgrößen. Optionale Inhalte, Sprachen und temporärer Speicher können zusätzlich Platz benötigen. Bei aktiven Downloads zeigt der Store den Fortschritt aus Steam.
 
 Wenn Apollo den Eintrag „Virtual Display“ anbietet, startet der aktuelle Begleitdienst das ausgewählte Steam-Spiel erst nach Aufbau des virtuellen Streams. Auf diesem Weg funktionieren die Profiloptionen auch ohne Austausch der älteren Apollo-Startdatei. Für ältere Apollo-Einträge bleibt „Spielstart aktualisieren“ verfügbar.
+
+Während des Spiels öffnet **Zurück** auf der TV-Fernbedienung das Kontrollzentrum. **Stream trennen** lässt das Spiel für später offen. **Spiel beenden** schließt es auf dem PC und führt zur Bibliothek. Möchte ein anderes Profil spielen, kann es den Wechsel in Dolos bestätigen. Erkennbare Steam-Lizenztexte erscheinen beim Spielstart zur persönlichen Bestätigung.
+
+Bei Assetto Corsa Competizione aktiviert Dolos für den Konsolenstart den Gamepad-Modus in einer vorhandenen Steuerungskonfiguration. Nach Spielende stellt der PC-Begleiter den vorherigen Modus wieder her. Die gespeicherten Lenkradbelegungen bleiben erhalten.

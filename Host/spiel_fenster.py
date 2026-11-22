@@ -54,6 +54,14 @@ class MonitorDevice(MonitorInfo):
 
 def capture_monitor(require_virtual=False):
     """Use Apollo's active virtual output, including negative desktop coordinates."""
+    dpi=getattr(ctypes.windll.user32,"SetThreadDpiAwarenessContext",None)
+    if dpi:dpi.restype=wt.HANDLE
+    previous=dpi(wt.HANDLE(-4)) if dpi else None
+    try:return find_capture_monitor(require_virtual)
+    finally:
+        if previous:dpi(wt.HANDLE(previous))
+
+def find_capture_monitor(require_virtual):
     import os,re
     log=Path(os.environ["ProgramFiles"])/"Apollo/config/sunshine.log"
     name=None
@@ -115,18 +123,11 @@ def stream_launch_args(key):
         return ()
     if not any(target[0].glob("*/Binaries/Win64/*-Shipping.exe")):
         return ()
-    user=ctypes.windll.user32
-    dpi=getattr(user,"SetThreadDpiAwarenessContext",None)
-    if dpi:dpi.restype=wt.HANDLE
-    previous=dpi(wt.HANDLE(-4)) if dpi else None
-    try:
-        info=capture_monitor(require_virtual=True)
-        if not info:return ()
-        r=info.monitor
-        return ("-windowed","-ForceRes",f"-ResX={r.right-r.left}",f"-ResY={r.bottom-r.top}",
-                f"-WinX={r.left}",f"-WinY={r.top}")
-    finally:
-        if previous:dpi(wt.HANDLE(previous))
+    info=capture_monitor(require_virtual=True)
+    if not info:return ()
+    r=info.monitor
+    return ("-windowed","-ForceRes",f"-ResX={r.right-r.left}",f"-ResY={r.bottom-r.top}",
+            f"-WinX={r.left}",f"-WinY={r.top}")
 
 def hotline_resolution(path,size,expected=None):
     """Apply and conditionally restore the four settings of the known window.dat format."""
@@ -146,10 +147,14 @@ def hotline_resolution(path,size,expected=None):
         finally:name.unlink(missing_ok=True)
     return original
 
-def hotline_window_file():
+def documents_folder():
     buf=ctypes.create_unicode_buffer(260)
     if ctypes.windll.shell32.SHGetFolderPathW(None,5,None,0,buf)!=0:return None
-    return Path(buf.value)/"My Games/HotlineMiami2/window.dat"
+    return Path(buf.value)
+
+def hotline_window_file():
+    documents=documents_folder()
+    return documents/"My Games/HotlineMiami2/window.dat" if documents is not None else None
 
 def game_window(key,background=False):
     target=targets_now().get(key)
@@ -249,7 +254,7 @@ def launch_stage(key):
 
 def playing(key):return screen(key)
 
-def close_game(key):
+def close_game(key,owns_session=None):
     handle=game_window(key,True)
     if not handle:return False
     u=ctypes.windll.user32
@@ -262,6 +267,11 @@ def close_game(key):
         if not key.isascii() or not key.isdecimal() or len(key)>10:return
         from steam_aktion import running
         if not running(key):return
+        if owns_session:
+            if owns_session():
+                import subprocess
+                subprocess.Popen([str(steam_path()/"steam.exe"),"+app_stop",key,"0"],creationflags=subprocess.CREATE_NO_WINDOW)
+            return
         from ctypes import windll
         kernel=windll.kernel32
         process=kernel.OpenProcess(0x1000,False,pid.value)

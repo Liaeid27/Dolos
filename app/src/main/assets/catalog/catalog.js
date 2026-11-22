@@ -6,6 +6,8 @@ document.querySelectorAll("[data-icon]").forEach(b=>b.innerHTML=svg(b.dataset.ic
 let familyLink=null,items=[],page="home",selection="",product=null,filter=0,username="",sound=true,initialized=false;
 let wallIndex=0,wallToken=0,lastWall=null,context=null,lastTone=0,returnFocus=null;
 const filters=["Alle Spiele","Installiert","Zum Download","Eigene Spiele","Hinzugefügt"];
+let shelfScope="",rememberedTile=null,renderingShelf=false;
+function shelfIdentity(g){return g.steamId?"steam."+g.steamId:String(g.id)}
 const storeTile={id:"",name:"Dolos Store"};
 function native(name,id){location.href="aster://"+name+"/"+(id||0)}
 function tone(ok=false){
@@ -101,6 +103,8 @@ function refreshHomeDetails(){
 function selectGame(g,button){
  const changed=selection!==g.id;
  if(changed)tone();selection=g.id;
+ if(!renderingShelf&&shelfScope){rememberedTile=null;try{localStorage.setItem("dolos.shelf."+shelfScope,shelfIdentity(g))}catch(e){}}
+
  if(changed||!button?.classList.contains("current"))scheduleTrailer(g);
  $("#hint").textContent=g.id?"✕　Starten　　☰　Optionen":"✕　Auswählen";
  const old=$("#rail .current");if(old!==button){old?.classList.remove("current");button?.classList.add("current")}
@@ -109,13 +113,13 @@ function selectGame(g,button){
  refreshHomeDetails();
 }
 function showHome(){
- screen("home");const rail=$("#rail");rail.replaceChildren();let focus;
+ renderingShelf=true;screen("home");const rail=$("#rail");rail.replaceChildren();let focus;
  for(const g of [storeTile,...items.filter(x=>x.pinned)]){
    const b=document.createElement("button");b.className="tile";b.setAttribute("aria-label",g.name);
    if(g.id)art(b,g);else{b.classList.add("bag");b.innerHTML=svg("bag")}
    b.dataset.id=g.id;b.oncontextmenu=e=>{e.preventDefault();if(g.id)openGameOptions(items.find(i=>i.id===g.id)||g)};b.onfocus=()=>selectGame(g,b);b.onclick=()=>{selectGame(g,b);playCurrent()};rail.append(b);if(String(g.id)===String(selection))focus=b
  }
- focus=focus||rail.firstChild;focus.focus({preventScroll:true});if(focus!==rail.firstChild)focus.scrollIntoView({block:"nearest",inline:"nearest"});else{rail.scrollLeft=0;rail.scrollTop=0;}if(!focus.classList.contains("current"))selectGame(current(),focus)
+ focus=focus||rail.firstChild;focus.focus({preventScroll:true});if(focus!==rail.firstChild)focus.scrollIntoView({block:"nearest",inline:"nearest"});else{rail.scrollLeft=0;rail.scrollTop=0;}if(!focus.classList.contains("current"))selectGame(current(),focus);renderingShelf=false
 }
 function download(g){return ["cached","owned","family"].includes(g.state)}
 function transferLabel(g){const x=g.transfer;if(!x)return "";return x.total?Math.min(99,Math.floor(100*x.done/x.total))+" %":"Wartet"}
@@ -199,21 +203,27 @@ $("#settings").onclick=()=>native("studio","appearance");$("#profile").onclick=(
 $("#trophies").onclick=()=>{trophyData=null;manage("Trophäen");native("trophies",product.id)};
 $("#launch").onclick=()=>playGame(product);$("#remove").onclick=()=>{const g=product;manage("Downloads");native("remove",g.id)};
 $("#pin").onclick=()=>{product.pinned=!product.pinned;if(product.pinned)selection=product.id;native(product.pinned?"pin":"unpin",product.id);detail(product)};
-window.loadCatalog=(rows,profile,enableSound,scope="")=>{
+window.loadCatalog=(rows,profile,enableSound,scope="",slotKey=profile)=>{
  saveScope=scope;
- const changed=profile!==username;username=profile;sound=enableSound;$("#profile b").textContent=(profile||"D").slice(0,1).toUpperCase();$("#profile").setAttribute("aria-label","Profil: "+profile);
+ const changed=slotKey!==shelfScope;
+ if(changed){
+  shelfScope=slotKey;selection="";rememberedTile=null;
+  try{rememberedTile=localStorage.getItem("dolos.shelf."+slotKey)}catch(e){}
+ }
+ username=profile;sound=enableSound;$("#profile b").textContent=(profile||"D").slice(0,1).toUpperCase();$("#profile").setAttribute("aria-label","Profil: "+profile);
  familyLink=rows.find(g=>g.name==="Steam Big Picture"&&g.state==="host");
 
  for(const g of rows){const cover=typeof controlData!=="undefined"?controlData.covers?.[g.steamId||g.name]:undefined;if(typeof cover==="boolean")g.hasCover=cover}
  const priorGame=items.find(x=>x.id===selection);
  items=rows.filter(g=>!(g.state==="host"&&["Steam Big Picture","Desktop","Virtual Display"].includes(g.name)));
  if(!changed&&priorGame?.steamId&&!items.some(x=>x.id===selection&&x.pinned))selection=items.find(x=>x.pinned&&x.steamId===priorGame.steamId)?.id||"";
+ if(rememberedTile){const saved=items.find(x=>x.pinned&&shelfIdentity(x)===rememberedTile);if(saved){selection=saved.id;rememberedTile=null}}
  const shelf=[storeTile,...items.filter(g=>g.pinned)];
  const tiles=[...$("#rail").children];
  if(initialized&&!changed&&page==="home"&&shelf.length===tiles.length&&shelf.every((g,i)=>g.id===tiles[i].dataset.id&&g.name===tiles[i].getAttribute("aria-label"))){
     refreshHomeDetails();return;
  }
- if(!initialized||changed||page==="home"){initialized=true;if(changed)selection="";showHome()}
+ if(!initialized||changed||page==="home"){initialized=true;showHome()}
  else if(page==="store")showStore(document.activeElement?.dataset.id);else if(page==="product"){const game=items.find(x=>x.id===product?.id);game?detail(game):showStore()}
 };
 document.addEventListener("click",()=>tone(true));document.addEventListener("focusin",()=>tone());

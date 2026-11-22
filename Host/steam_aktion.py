@@ -36,7 +36,9 @@ def running(key):
 def validate_folder(path):
     raw=Path(path);path=raw.resolve()
     roots=[Path(os.environ["LOCALAPPDATA"]),Path(os.environ["APPDATA"]),Path.home()/"AppData/LocalLow",Path.home()/"Documents",Path.home()/"Saved Games"]
-    if path!=raw.absolute() or not any(path.is_relative_to(root.resolve()) and len(path.relative_to(root.resolve()).parts)>=2 for root in roots):
+    known_game_root=path==Path.home()/"Saved Games/Hades II"
+    nested_game_folder=any(path.is_relative_to(root.resolve()) and len(path.relative_to(root.resolve()).parts)>=2 for root in roots)
+    if path!=raw.absolute() or not (known_game_root or nested_game_folder):
         raise ValueError("Wähle den Unterordner mit den Spielständen dieses Spiels.")
     return path
 
@@ -95,8 +97,10 @@ def restore_idle(seen):
         with save_lock(key):
             if not marker.exists():continue
             now=time.time()
+            started=json.loads(marker.read_text())["start"]
             if running(key):seen[key]=now;continue
-            if now-seen.get(key,json.loads(marker.read_text())["start"]+170)>10:
+            last_seen=seen.get(key,0)
+            if now-(last_seen if last_seen>=started else started+170)>10:
                 restore_saved(key);seen.pop(key,None)
 
 def launch_game(steam,appid,profile,display_args=()):
@@ -108,7 +112,13 @@ def launch_game(steam,appid,profile,display_args=()):
         if appid not in BUILTIN_PROFILES:raise ValueError("Speicherordner für dieses Spiel einrichten.")
         path=profile_path(appid,profile);path.mkdir(parents=True,exist_ok=True)
         args={"1903340":["-UserDir="+str(path)],"105600":["-savedirectory",str(path)],"294100":["-savedatafolder="+str(path)],"1874880":["-profile",str(path),"-backendLocalStorage"]}[appid]
-    subprocess.Popen([str(steam/"steam.exe"),"-applaunch",appid,*args,*display_args])
+    try:
+        subprocess.Popen([str(steam/"steam.exe"),"-applaunch",appid,*args,*display_args])
+    except OSError:
+        if profile and appid in folders():
+            with save_lock(appid):
+                if not running(appid):restore_saved(appid)
+        raise
 
 if __name__=="__main__":
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r"Software\Valve\Steam") as k:

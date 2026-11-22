@@ -75,7 +75,7 @@ final class Catalog {
             AppView.AppObject game=entries.get(row.getString("id"));
             row.put("lastPlayed",history.getLong(sid.isEmpty()?game.toString():sid,0));
         }catch(JSONException ignored){}
-        String args=data.toString()+","+JSONObject.quote(home.profileName(home.profile))+","+com.limelight.preferences.ProfileSettings.group(home.host,"console").getBoolean("sound",true)+","+JSONObject.quote(home.profile==0 && uuid!=null?uuid+".0":"");
+        String args=data.toString()+","+JSONObject.quote(home.profileName(home.profile))+","+com.limelight.preferences.ProfileSettings.group(home.host,"console").getBoolean("sound",true)+","+JSONObject.quote(home.profile==0 && uuid!=null?uuid+".0":"")+","+JSONObject.quote((uuid==null?"":uuid)+"."+home.profile);
         if(!last.equals(args)){last=args;web.evaluateJavascript("loadCatalog("+args+")",done->{
             if(!BuildConfig.REMOTE_BUILD&&home.library!=null&&home.host instanceof AppView){
                 AppView activity=(AppView)home.host;

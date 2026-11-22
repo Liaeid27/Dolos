@@ -1365,7 +1365,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     private volatile boolean returningToLibrary;
     private void returnToLibrary(){
-        if(isFinishing()||isDestroyed())return;
+        if(returningToLibrary||isFinishing()||isDestroyed())return;
         returningToLibrary=true;stopCurtainMonitor=true;
         Intent home=new Intent(this,AppView.class).putExtra(AppView.UUID_EXTRA,getIntent().getStringExtra(EXTRA_PC_UUID))
                 .putExtra(AppView.NAME_EXTRA,getIntent().getStringExtra(EXTRA_PC_NAME)).putExtra("afterGame",true);
@@ -1374,6 +1374,16 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
     private boolean manualPicture;
     private String screenKey="";
+    private volatile String gameSession;
+    private volatile boolean managedLaunchReady;
+    private volatile boolean closingGame;
+    private boolean checkingTerms;
+    private String foregroundPath(boolean virtual){
+        String path="/foreground/"+screenKey;
+        String session=gameSession;
+        if(session!=null)return path+"?session="+android.net.Uri.encode(session)+(virtual?"&virtual=1":"");
+        return path+(virtual?"?virtual=1":"");
+    }
     private void setGamePictureVisible(boolean visible) {
         // Leave the decoder surface in place during window transitions.
         if(!visible){
@@ -1397,7 +1407,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             StringBuilder b=new StringBuilder();for(int i=0;i<12;i++)b.append(String.format(java.util.Locale.US,"%02x",bytes[i]&255));key=b.toString();
         }catch(Exception ignored){}
         final boolean virtual=getIntent().getBooleanExtra("verifyVirtualDisplay",false);
-        screenKey=key;final String path="/foreground/"+key+(virtual?"?virtual=1":""),host=getIntent().getStringExtra(EXTRA_HOST);
+        screenKey=key;final String host=getIntent().getStringExtra(EXTRA_HOST);
         final android.widget.Button exit=new android.widget.Button(this);exit.setText("Zur Startseite　 ·　 Spielmenü-Taste halten");exit.setAllCaps(false);
         exit.setOnClickListener(v->{
             if (Boolean.TRUE.equals(exit.getTag())) {
@@ -1413,30 +1423,45 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         new Thread(()->{
             String nonce=getIntent().getStringExtra("managedLaunch");
             if(nonce!=null)try{
-                ControlLink.request(host,"/launch",new org.json.JSONObject().put("request",nonce).put("id",screenKey).put("profile",getIntent().getIntExtra("launchProfile",0)),pin,token);
+                org.json.JSONObject launched=ControlLink.request(host,"/launch",new org.json.JSONObject().put("request",nonce).put("id",screenKey).put("profile",getIntent().getIntExtra("launchProfile",0)),pin,token);
+                gameSession=launched.optString("session",null);
+                managedLaunchReady=true;
             }catch(Exception e){runOnUiThread(()->ConsoleDock.show(this,e.getMessage(),new String[]{"Zur Startseite"},i->returnToLibrary()));return;}
             boolean previous=false,wasRunning=false;int readySamples=0,closedSamples=0;long prepared=0;
             long waitingSince=android.os.SystemClock.elapsedRealtime();
-            boolean revealed=false;
+            boolean revealed=false;String lastTerms="";
             while(!stopCurtainMonitor){
                 boolean visible=false;String stage="";
                 try{
-                    org.json.JSONObject state=ControlLink.request(host,path,null,pin,token);
+                    org.json.JSONObject state=ControlLink.request(host,foregroundPath(virtual),null,pin,token);
+                    if(state.optBoolean("replaced")){runOnUiThread(this::returnToLibrary);return;}
                     visible=state.optBoolean("visible");stage=state.optString("stage");
+                    if(!closingGame&&!state.isNull("terms")){
+                        String terms=state.optString("terms");
+                        if(!terms.isEmpty()&&!terms.equals(lastTerms)){
+                            lastTerms=terms;runOnUiThread(()->{if(!stopCurtainMonitor&&!closingGame&&!isFinishing())checkLaunchTerms(host,pin,token);});
+                        }
+                    }
                     if(state.optBoolean("running"))wasRunning=true;
                     if(wasRunning&&!visible&&state.has("running")&&!state.isNull("running")&&!state.optBoolean("running"))closedSamples++;else closedSamples=0;
-                    if(closedSamples>=4){
+                    if(closedSamples>=4 && !closingGame){
                         stopCurtainMonitor=true;
                         try{NvHTTP session=new NvHTTP(new ComputerDetails.AddressTuple(host,getIntent().getIntExtra(EXTRA_PORT,NvHTTP.DEFAULT_HTTP_PORT)),getIntent().getIntExtra(EXTRA_HTTPS_PORT,0),getIntent().getStringExtra(EXTRA_UNIQUEID),consoleHostCert,PlatformBinding.getCryptoProvider(this));
                             if(session.getCurrentGame(session.getServerInfo(true))==getIntent().getIntExtra(EXTRA_APP_ID,0))session.quitApp();
                         }catch(Exception ignored){}
                         runOnUiThread(this::returnToLibrary);return;
                     }
-                    if(!visible&&android.os.SystemClock.elapsedRealtime()-prepared>3000){
+                    if(!closingGame&&!visible&&android.os.SystemClock.elapsedRealtime()-prepared>3000){
                         prepared=android.os.SystemClock.elapsedRealtime();
-                        visible=ControlLink.request(host,"/screen/"+screenKey,new org.json.JSONObject().put("action","prepare").put("virtual",virtual),pin,token).optBoolean("visible");
+                        visible=ControlLink.request(host,"/screen/"+screenKey,new org.json.JSONObject().put("action","prepare").put("virtual",virtual).put("session",gameSession),pin,token).optBoolean("visible");
                     }
-                }catch(Exception ignored){}
+                }catch(Exception ignored){
+                    // A delayed status request does not by itself mean the game left the display.
+                    if(!stopCurtainMonitor && previous && android.os.SystemClock.elapsedRealtime()-waitingSince<2200){
+                        try{Thread.sleep(550);}catch(InterruptedException e){return;}
+                        continue;
+                    }
+                }
                 readySamples=visible?readySamples+1:0;
                 if(readySamples>=2)revealed=true;
                 else if(!visible)revealed=false;
@@ -1445,7 +1470,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 final boolean delayed=!show&&android.os.SystemClock.elapsedRealtime()-waitingSince>22000;
                 final boolean gameRunning=wasRunning;final String launchStage=stage;
                 final boolean changed=previous!=visible;runOnUiThread(()->{
-                    if(stopCurtainMonitor||isFinishing())return;
+                    if(stopCurtainMonitor||closingGame||isFinishing())return;
                     if(delayed&&!launchStage.isEmpty())exit.setText(launchStage+"　 ·　 Zur Startseite");
                     else if(delayed)exit.setText(gameRunning?"Spiel läuft · Warte auf das Bild am Stream-Display　 ·　 Zur Startseite":"Warte auf das Spielfenster　 ·　 Startdialog prüfen");
                     exit.setTag(delayed);
@@ -1464,26 +1489,28 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     private void checkLaunchTerms(String host,String pin,String token){
+        if(checkingTerms||closingGame||isFinishing())return;
+        checkingTerms=true;
         new Thread(()->{try{
-            org.json.JSONObject body=new org.json.JSONObject().put("request",getIntent().getStringExtra("managedLaunch"));
+            org.json.JSONObject body=new org.json.JSONObject().put("request",gameSession!=null?gameSession:getIntent().getStringExtra("managedLaunch"));
             org.json.JSONObject result=ControlLink.request(host,"/launch-terms",body,pin,token);
             runOnUiThread(()->{
-                if(isFinishing())return;
-                if(!result.has("text")){ConsoleDock.show(this,"Kein lesbarer Steam-Lizenzdialog gefunden",new String[]{"Zurück"},i->{});return;}
+                if(isFinishing()||closingGame||stopCurtainMonitor){checkingTerms=false;return;}
+                if(!result.has("text")){checkingTerms=false;ConsoleDock.show(this,"Kein lesbarer Steam-Lizenzdialog gefunden",new String[]{"Zurück"},i->{});return;}
                 android.widget.TextView detail=new android.widget.TextView(this);detail.setText(result.optString("text"));
                 ConsoleDock.panel(this,"Nutzungsbedingungen",detail,new String[]{"Zurück","Zustimmen"},i->{
                     if(i==1)new Thread(()->{try{
                         if(!ControlLink.request(host,"/launch-terms",body.put("hash",result.getString("hash")),pin,token).optBoolean("confirmed"))throw new java.io.IOException();
                     }catch(Exception e){runOnUiThread(()->Toast.makeText(this,"Steam hat die Zustimmung nicht bestätigt.",Toast.LENGTH_LONG).show());}}).start();
-                },-1);
+                },-1).setOnDismissListener(dialog->checkingTerms=false);
             });
-        }catch(Exception e){runOnUiThread(()->Toast.makeText(this,"Steam-Dialog derzeit nicht erreichbar.",Toast.LENGTH_LONG).show());}}).start();
+        }catch(Exception e){runOnUiThread(()->{checkingTerms=false;if(!isFinishing())Toast.makeText(this,"Steam-Dialog derzeit nicht erreichbar.",Toast.LENGTH_LONG).show();});}}).start();
     }
 
     private void endConsoleSession() {
         ConsoleDock.show(this,"Spiel verlassen?",new String[]{"Weiterspielen","Spiel beenden"},which->{
-                if(which==0)return;
-                manualPicture=false;setGamePictureVisible(false);
+                if(which==0||closingGame)return;
+                closingGame=true;manualPicture=false;setGamePictureVisible(false);
                 Intent launch=getIntent();
                 new Thread(()->{
                     try {
@@ -1495,21 +1522,28 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         String pin=control.getString("cert",null),token=control.getString("token",null);
                         if(!screenKey.isEmpty()&&pin!=null&&token!=null){
                             String pc=launch.getStringExtra(EXTRA_HOST);
-                            org.json.JSONObject ack=ControlLink.request(pc,"/screen/"+screenKey,new org.json.JSONObject().put("action","close"),pin,token);
-                            if(!ack.optBoolean("accepted") && (http.getCurrentGame(http.getServerInfo(true))==0 || !ControlLink.request(pc,"/foreground/"+screenKey,null,pin,token).optBoolean("running",true))){if(http.getCurrentGame(http.getServerInfo(true))==getIntent().getIntExtra(EXTRA_APP_ID,0))http.quitApp();runOnUiThread(this::returnToLibrary);return;}
-                            if(!ack.optBoolean("accepted"))throw new java.io.IOException("Spielfenster nicht erreichbar. Stream über das Kontrollzentrum trennen.");
-                            boolean open=true;
-                            for(int i=0;i<36&&open;i++){
-                                Thread.sleep(400);
-                                org.json.JSONObject state=ControlLink.request(pc,"/foreground/"+screenKey,null,pin,token);
-                                open=state.optBoolean("visible")||state.optBoolean("running");
+                            if(launch.hasExtra("managedLaunch") && !managedLaunchReady){
+                                // Wait for the host to resolve a resumed session before sending its stop command.
+                                for(int i=0;i<40&&!managedLaunchReady&&!isFinishing();i++)Thread.sleep(200);
+                                if(!managedLaunchReady)throw new java.io.IOException("Der PC bestätigt den Spielstart noch. Versuche es gleich erneut.");
                             }
-                            if(open)throw new java.io.IOException("Steam meldet das Spiel noch als geöffnet. Im Spiel den Beenden-Dialog prüfen.");
+                            org.json.JSONObject ack=ControlLink.request(pc,"/screen/"+screenKey,new org.json.JSONObject().put("action","close").put("session",gameSession),pin,token);
+                            if(ack.optBoolean("replaced")){runOnUiThread(this::returnToLibrary);return;}
+                            boolean open=true;
+                            for(int i=0;i<50;i++){
+                                org.json.JSONObject state=ControlLink.request(pc,foregroundPath(false),null,pin,token);
+                                if(state.optBoolean("replaced")){runOnUiThread(this::returnToLibrary);return;}
+                                open=state.optBoolean("visible")||state.optBoolean("running");
+                                if(!open)break;
+                                if(!ack.optBoolean("accepted"))throw new java.io.IOException("Spielfenster konnte nicht geschlossen werden.");
+                                Thread.sleep(400);
+                            }
+                            if(open)throw new java.io.IOException("Das Spiel ist noch geöffnet. Prüfe den Beenden-Dialog im Spiel.");
                         }
                         if(http.getCurrentGame(http.getServerInfo(true))==getIntent().getIntExtra(EXTRA_APP_ID,0) && !http.quitApp()) throw new java.io.IOException("Sitzung konnte nicht beendet werden");
                         runOnUiThread(this::returnToLibrary);
                     } catch(Exception e) {
-                        runOnUiThread(()->Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show());
+                        runOnUiThread(()->{closingGame=false;Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show();});
                     }
                 }).start();
             });
@@ -2564,7 +2598,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public void connectionTerminated(final int errorCode) {
-        if(returningToLibrary||errorCode==MoonBridge.ML_ERROR_GRACEFUL_TERMINATION && !stopCurtainMonitor && !isFinishing()){runOnUiThread(this::returnToLibrary);return;}
+        if(returningToLibrary || errorCode==MoonBridge.ML_ERROR_GRACEFUL_TERMINATION && !isFinishing()){runOnUiThread(this::returnToLibrary);return;}
         // Perform a connection test if the failure could be due to a blocked port
         // This does network I/O, so don't do it on the main thread.
         final int portFlags = MoonBridge.getPortFlagsFromTerminationErrorCode(errorCode);

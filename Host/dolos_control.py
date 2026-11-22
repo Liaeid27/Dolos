@@ -14,6 +14,7 @@ PAUSED=False
 ATTEMPTS=collections.deque(maxlen=24)
 PENDING_OFF=False
 DOWNLOAD_ACTION={}
+LAUNCH_TERMS={}
 CATALOG=[]
 REQUIRED={}
 SIZE_STAMP=None
@@ -221,6 +222,14 @@ def save_candidates(key):
     names={game.get("name",""),target[0].name if target else ""}
     roots=[Path.home()/"Documents",Path.home()/"Documents/My Games",Path.home()/"Saved Games",Path(os.environ["LOCALAPPDATA"]),Path(os.environ["APPDATA"]),Path.home()/"AppData/LocalLow"]
     result=set()
+    if key=="1145350":
+        hades=Path.home()/"Saved Games/Hades II"
+        if any(hades.glob("Profile[1-9].sav")) and hades.resolve()==hades.absolute():result.add(hades)
+    if key=="1091500":
+        cyberpunk=Path.home()/"Saved Games/CD Projekt Red/Cyberpunk 2077"
+        if any(cyberpunk.glob("*/sav.dat")):
+            try:result.add(validate_folder(cyberpunk))
+            except ValueError:pass
     for root in roots:
         for name in names:
             if not name or Path(name).name!=name or name in (".",".."):continue
@@ -304,6 +313,66 @@ def queue_step(apps):
             changed=True
         if changed:write("queue.json",QUEUE)
 
+def launch_pending(last):
+    return bool(last and not last.get("observed") and
+                (time.time()-last["time"]<45 or LAUNCH_TERMS.get(last.get("request"))))
+
+def end_managed_game(last):
+    """Called under LOCK after matching the launch generation."""
+    from spiel_fenster import close_game
+    key=last["id"]
+    if not last.get("ending") or time.time()-last.get("endTime",0)>12:
+        has_window=close_game(key,lambda:read("last-launch.json",{}).get("request")==last.get("request"))
+        steam_running=running(key)
+        if has_window or steam_running:last["observed"]=True
+        if not has_window and (steam_running or launch_pending(last)):
+            # Startup helpers can keep Steam running without an open game window.
+            subprocess.Popen([str(steam_path()/"steam.exe"),"+app_stop",key,"0"],
+                             creationflags=subprocess.CREATE_NO_WINDOW)
+        last["endTime"]=time.time()
+    last["ending"]=True
+    write("last-launch.json",last)
+
+def acc_gamepad(prepare=False):
+    """Select ACC's gamepad driving mode for a console launch, preserving wheel bindings."""
+    import re
+    from spiel_fenster import documents_folder
+    documents=documents_folder()
+    if documents is None:return
+    path=documents/"Assetto Corsa Competizione/Config/controls.json"
+    marker=DATA/"acc-gamepad.json"
+    previous=read(marker.name,{})
+    if running("805550"):
+        if previous and not previous.get("started"):
+            previous["started"]=True;write(marker.name,previous)
+        return
+    if not prepare and not previous:return
+    if previous and not prepare and not previous.get("started") and time.time()-previous["time"]<180:return
+    if not path.is_file() or path.is_symlink():return
+    data=path.read_bytes()
+    pattern=rb'("carControllerMode"\s*:\s*)([0-9]+)(?=\s*[,}])'
+    matches=list(re.finditer(pattern,data))
+    if len(matches)!=1:return
+    start,end=matches[0].span(2)
+    mode=int(data[start:end])
+    if prepare:
+        if mode==1:
+            if previous:write(marker.name,{"mode":previous["mode"],"time":time.time()})
+            return
+        write(marker.name,{"mode":mode,"time":time.time()})
+        target=1
+    else:
+        target=previous["mode"]
+        if mode!=1:
+            marker.unlink(missing_ok=True);return
+    from tempfile import NamedTemporaryFile
+    with NamedTemporaryFile(dir=path.parent,delete=False) as f:
+        tmp=Path(f.name)
+        f.write(data[:start]+str(target).encode("ascii")+data[end:])
+    try:tmp.replace(path)
+    finally:tmp.unlink(missing_ok=True)
+    if not prepare:marker.unlink(missing_ok=True)
+
 def hotline_display(prepare=False):
     from spiel_fenster import capture_monitor,hotline_resolution,hotline_window_file
     import struct
@@ -343,7 +412,15 @@ def worker():
             try:restore_idle(seen)
             except (OSError,ValueError,KeyError):pass
             with LOCK:
+                last=read("last-launch.json",{})
+                if last.get("id") and not last.get("observed") and running(last["id"]):
+                    last["observed"]=True
+                    if last.get("ending"):
+                        last.pop("endTime",None)
+                        end_managed_game(last)
+                    else:write("last-launch.json",last)
                 if (DATA/"hotline-display.json").exists():hotline_display()
+                if (DATA/"acc-gamepad.json").exists():acc_gamepad()
             apps=manifests()
             if time.monotonic()<TRANSFER_VIEW_UNTIL:
                 from steam_progress import update
@@ -417,9 +494,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path in ("/status","/status/downloads") and not post:
                 if self.path=="/status/downloads":TRANSFER_VIEW_UNTIL=time.monotonic()+12
-                with LOCK:status=dict(LAST,hostBuild=339,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
+                with LOCK:status=dict(LAST,hostBuild=340,downloadAction=DOWNLOAD_ACTION,mediaCount=len(MEDIA),coverAtlas=ATLAS,pcArtwork=ART_REVISIONS,directProfiles=sorted(BUILTIN_PROFILES|set(folders())),profileLaunch=sorted(BUILTIN_PROFILES|set(folders())) if profile_helper_ready() else [],profileNames=read("profiles.json",{}),catalog=CATALOG,saveTimes=SAVE_TIMES,covers=COVERS,storeLinks=STORE_LINKS,disks=DISKS,queue=list(QUEUE),paused=PAUSED)
                 last=read("last-launch.json",{})
-                if last.get("id") and running(last["id"]):
+                if last.get("id") and (running(last["id"]) or launch_pending(last) and not last.get("ending")):
                     status["activeGame"]={"id":last["id"],"request":last.get("request"),"profile":last.get("profile",0),"name":status.get("apps",{}).get(last["id"],{}).get("name","Spiel")}
                 return self.reply(200,status)
             if self.path=="/catalog-media" and not post:return self.reply(200,MEDIA.copy())
@@ -441,24 +518,45 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.startswith("/screen/") and post:
                 from spiel_fenster import screen,close_game
                 game=self.path.rsplit("/",1)[1]
-                if req.get("action")=="close":return self.reply(200,{"accepted":close_game(game)})
-                if req.get("action")=="prepare":return self.reply(200,{"visible":screen(game,True,req.get("virtual") is True)})
-                return self.reply(400,{})
+                with LOCK:
+                    session=req.get("session")
+                    last=read("last-launch.json",{})
+                    if session and (last.get("request")!=session or last.get("id")!=game):
+                        return self.reply(200,{"replaced":True})
+                    if req.get("action")=="close":
+                        if session:
+                            end_managed_game(last)
+                            return self.reply(200,{"accepted":True})
+                        accepted=close_game(game)
+                        if accepted and last.get("id")==game:
+                            last["ending"]=True;write("last-launch.json",last)
+                        return self.reply(200,{"accepted":accepted})
+                    if req.get("action")=="prepare":
+                        if last.get("id")==game and last.get("ending") and session:return self.reply(200,{"visible":False})
+                        visible=screen(game,True,req.get("virtual") is True)
+                        if visible and last.get("id")==game and not last.get("observed"):
+                            last["observed"]=True;write("last-launch.json",last)
+                        return self.reply(200,{"visible":visible})
+                    return self.reply(400,{})
             if self.path=="/launch-terms" and post:
                 last=read("last-launch.json",{})
-                if not last.get("request") or last.get("request")!=req.get("request"):return self.reply(409,{})
+                if not last.get("request") or last.get("request")!=req.get("request") or last.get("ending"):return self.reply(409,{})
                 title=LAST.get("apps",{}).get(last["id"],{}).get("name")
                 if not title:return self.reply(409,{})
                 expected=req.get("hash")
-                return self.reply(200,steam_dialog(title,"accept" if expected else "terms",expected=expected))
+                if expected:
+                    with LOCK:
+                        current=read("last-launch.json",{})
+                        if current.get("request")!=last["request"] or current.get("ending"):return self.reply(409,{})
+                        return self.reply(200,steam_dialog(title,"accept",expected=expected))
+                return self.reply(200,steam_dialog(title,"terms"))
             if self.path=="/end-active" and post:
                 from spiel_fenster import close_game
                 with LOCK:
                     last=read("last-launch.json",{})
                     if not last or last.get("id")!=req.get("id") or last.get("request")!=req.get("request"):
                         return self.reply(409,{"error":"Die aktive Spielsitzung hat sich geändert."})
-                    if running(last["id"]) and not close_game(last["id"]):return self.reply(409,{"error":"Das laufende Spiel kann gerade nicht geschlossen werden."})
-                    last["ending"]=True;write("last-launch.json",last)
+                    end_managed_game(last)
                     return self.reply(200,{"ok":True})
             if self.path=="/save-candidates" and post:
                 key=str(req.get("id",""))
@@ -485,8 +583,18 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.startswith("/foreground/") and not post:
                 from spiel_fenster import screen,launch_stage
                 key,_,query=self.path.rsplit("/",1)[1].partition("?")
-                visible=screen(key,require_virtual=query=="virtual=1")
-                return self.reply(200,{"visible":visible,"stage":"" if visible else launch_stage(key),"running":running(key) if key.isdecimal() and len(key)<=10 else None})
+                from urllib.parse import parse_qs
+                options=parse_qs(query)
+                session=options.get("session",[None])[0]
+                visible=screen(key,require_virtual=options.get("virtual")==["1"])
+                steam_running=running(key) if key.isdecimal() and len(key)<=10 else None
+                with LOCK:
+                    last=read("last-launch.json",{})
+                    if session and (session!=last.get("request") or key!=last.get("id")):return self.reply(200,{"replaced":True})
+                    if (visible or steam_running) and last.get("id")==key and not last.get("observed") and not last.get("ending"):
+                        last["observed"]=True;write("last-launch.json",last)
+                    pending_stop=bool(session and last.get("ending") and launch_pending(last))
+                return self.reply(200,{"visible":visible,"pendingStop":pending_stop,"terms":LAUNCH_TERMS.get(session) if session and not visible else None,"stage":"" if visible else launch_stage(key),"running":steam_running})
             if post and self.path=="/queue" and req.get("action") in ("downloadfirst","downloadpause","downloadcancel"):
                 ok,error=download_command(str(req.get("id","")),req["action"])
                 return self.reply(200 if ok else 409,{"ok":True,"error":error})
@@ -504,28 +612,39 @@ class Handler(BaseHTTPRequestHandler):
                     if LAST.get("apps",{}).get(key,{}).get("state")!="installed" or not key.isdecimal() or len(key)>10 or type(profile)!=int or profile not in range(4) or not isinstance(nonce,str) or len(nonce)!=36:
                         return self.reply(409,{"error":"Spiel noch nicht bereit."})
                     last=read("last-launch.json",{})
-                    if last.get("request")==nonce and last.get("id")==key and last.get("profile")==profile:return self.reply(200,{"ok":True})
-                    if last and (running(last["id"]) or (not last.get("ending") and time.time()-last["time"]<12)):
-                        if last["id"]==key and last["profile"]==profile:return self.reply(200,{"ok":True})
+                    if last and (running(last["id"]) or launch_pending(last)):
+                        if not last.get("ending") and last["id"]==key and last["profile"]==profile:return self.reply(200,{"ok":True,"session":last.get("request")})
+                        if last.get("ending"):return self.reply(409,{"error":"Steam beendet den vorigen Spielstart. Versuche es in einem Moment erneut."})
                         return self.reply(409,{"error":"Das vorige Spiel zuerst beenden."})
+                    if last and last.get("request")==nonce:return self.reply(409,{"error":"Diese Spielsitzung ist beendet. Starte das Spiel erneut."})
                     if running(key):return self.reply(409,{"error":"Dieses Spiel ist bereits auf dem PC geöffnet."})
                     from steam_aktion import launch_game
                     from spiel_fenster import stream_launch_args
                     try:
                         if key=="274170":hotline_display(prepare=True)
+                        if key=="805550":acc_gamepad(prepare=True)
                         launch_game(steam_path(),key,profile,stream_launch_args(key))
                     except (ValueError,OSError) as err:return self.reply(409,{"error":str(err)})
                     write("last-launch.json",dict(id=key,profile=profile,request=nonce,time=time.time()))
                     title=LAST["apps"][key].get("name")
                     if title:
                         def confirm_start():
-                            from spiel_fenster import game_window
-                            for delay in (2,4,8,12):
-                                time.sleep(delay)
-                                if read("last-launch.json",{}).get("request")!=nonce or game_window(key,True):return
-                                if steam_dialog(title,"launch").get("confirmed"):return
+                            from spiel_fenster import screen
+                            try:
+                                for delay in (2,4,8,12,20,30,45,60):
+                                    time.sleep(delay)
+                                    last=read("last-launch.json",{})
+                                    if last.get("request")!=nonce or last.get("ending") or screen(key):return
+                                    terms=steam_dialog(title,"terms")
+                                    if terms.get("hash"):
+                                        LAUNCH_TERMS[nonce]=terms["hash"]
+                                    else:
+                                        LAUNCH_TERMS.pop(nonce,None)
+                                        steam_dialog(title,"launch")
+                            finally:
+                                LAUNCH_TERMS.pop(nonce,None)
                         threading.Thread(target=confirm_start,daemon=True).start()
-                    return self.reply(200,{"ok":True})
+                    return self.reply(200,{"ok":True,"session":nonce})
                 if self.path=="/select" and post:
                     key=str(req.get("id",""))
                     if not key.isdecimal() or len(key)>10 or LAST.get("apps",{}).get(key,{}).get("state")!="installed":

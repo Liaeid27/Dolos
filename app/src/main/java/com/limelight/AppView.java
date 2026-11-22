@@ -391,6 +391,15 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
         Runnable launch = () -> {
             if(game.app.getAppId()==home.console.virtualAppId&&!Catalog.steamId(game.toString()).isEmpty()){
                 Intent intent=ServerHelper.createStartIntent(this,game.app,computer,managerBinder);
+                if(home.library!=null){
+                    String steamId=Catalog.steamId(game.toString());
+                    for(int i=0;i<home.library.getCount();i++){
+                        AppObject tile=(AppObject)home.library.getItem(i);
+                        if(tile.app.getAppId()!=game.app.getAppId() && steamId.equals(Catalog.steamId(tile.toString()))){
+                            intent.putExtra("gameArtworkId",tile.app.getAppId());break;
+                        }
+                    }
+                }
                 intent.putExtra("verifyVirtualDisplay",home.link.snapshot.optInt("hostBuild")>=335);
                 intent.putExtra("managedLaunch",java.util.UUID.randomUUID().toString()).putExtra("launchProfile",home.profile);
                 startActivity(intent);
